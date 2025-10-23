@@ -6,7 +6,6 @@
   <component name="ChangeListManager">
     <list default="true" id="ba20fe1f-c0d1-47b7-9f89-0d1c8d818107" name="更改" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/main/java/impl/project2/Project2ErrorListener.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/impl/project2/Project2ErrorListener.java" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -70,10 +69,10 @@
     <recent_temporary>
       <list>
         <item itemvalue="Makefile 目标.handin-check" />
+        <item itemvalue="Makefile 目标.handin-check" />
+        <item itemvalue="Makefile 目标.handin-check" />
         <item itemvalue="Makefile 目标.tarball" />
         <item itemvalue="应用程序.Main" />
-        <item itemvalue="Makefile 目标.all" />
-        <item itemvalue="Makefile 目标.all" />
       </list>
     </recent_temporary>
   </component>
