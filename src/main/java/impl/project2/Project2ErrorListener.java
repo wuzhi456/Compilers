@@ -17,10 +17,10 @@ public class Project2ErrorListener extends BaseErrorListener {
     public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line, int charPositionInLine, String msg, RecognitionException e) {
         // TODO: extract information
         SplcParser parser = (SplcParser) recognizer;
-        IntervalSet expectedTokens = parser.getExpectedTokens();
+        IntervalSet expected = parser.getExpectedTokens();
         String tokenName = null;
 
-        for (int tokenType : expectedTokens.toArray()) {
+        for (int tokenType : expected.toArray()) {
             if (tokenType == Token.EOF) {
                 continue;
             }

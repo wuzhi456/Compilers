@@ -5,13 +5,7 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="ba20fe1f-c0d1-47b7-9f89-0d1c8d818107" name="更改" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/.gitignore" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/codeStyles/codeStyleConfig.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/encodings.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Splc.g4" beforeDir="false" afterPath="$PROJECT_DIR$/Splc.g4" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/main/java/Main.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/Main.java" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/main/java/impl/project2/ConstExprVisitor.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/impl/project2/ConstExprVisitor.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/main/java/impl/project2/Project2ErrorListener.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/impl/project2/Project2ErrorListener.java" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -41,7 +35,7 @@
     &quot;git-widget-placeholder&quot;: &quot;my-project2&quot;
   }
 }</component>
-  <component name="RunManager" selected="应用程序.Main">
+  <component name="RunManager" selected="Makefile 目标.handin-check">
     <configuration name="Main" type="Application" factoryName="Application" temporary="true" nameIsGenerated="true">
       <option name="MAIN_CLASS_NAME" value="Main" />
       <module name="CS323-Compilers-2025F-Projects" />
@@ -61,11 +55,23 @@
       </makefile>
       <method v="2" />
     </configuration>
+    <configuration name="handin-check" type="MAKEFILE_TARGET_RUN_CONFIGURATION" factoryName="Makefile" temporary="true">
+      <makefile filename="$PROJECT_DIR$/conf/handin.mk" target="handin-check" workingDirectory="" arguments="">
+        <envs />
+      </makefile>
+      <method v="2" />
+    </configuration>
+    <configuration name="tarball" type="MAKEFILE_TARGET_RUN_CONFIGURATION" factoryName="Makefile" temporary="true">
+      <makefile filename="$PROJECT_DIR$/conf/handin.mk" target="tarball" workingDirectory="" arguments="">
+        <envs />
+      </makefile>
+      <method v="2" />
+    </configuration>
     <recent_temporary>
       <list>
+        <item itemvalue="Makefile 目标.handin-check" />
+        <item itemvalue="Makefile 目标.tarball" />
         <item itemvalue="应用程序.Main" />
-        <item itemvalue="Makefile 目标.all" />
-        <item itemvalue="Makefile 目标.all" />
         <item itemvalue="Makefile 目标.all" />
         <item itemvalue="Makefile 目标.all" />
       </list>
