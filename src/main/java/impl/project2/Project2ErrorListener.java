@@ -239,6 +239,31 @@ public class Project2ErrorListener extends BaseErrorListener {
             }
         }
 
+        // 新增情况4：多维数组声明 - 当前token是数字，期望赋值或分号，前一个token是右方括号
+        if ("Number".equals(tokenType) && expectsAssignOrSemi(expected, vocabulary)) {
+            return isPrecededByRightBracket(recognizer, token, vocabulary);
+        }
+
+        // 新增情况5：多维数组声明 - 当前token是标识符，期望赋值或分号，前一个token是右方括号
+        if ("Identifier".equals(tokenType) && expectsAssignOrSemi(expected, vocabulary)) {
+            return isPrecededByRightBracket(recognizer, token, vocabulary);
+        }
+
+        return false;
+    }
+
+    /**
+     * 检查是否前一个token是右方括号
+     */
+    private boolean isPrecededByRightBracket(Recognizer<?, ?> recognizer, Token token, Vocabulary vocabulary) {
+        if (recognizer instanceof SplcParser &&
+                ((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream) {
+
+            CommonTokenStream tokenStream = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
+            Token prevToken = getPreviousNonHiddenToken(tokenStream, token);
+
+            return prevToken != null && "RBRACK".equals(vocabulary.getSymbolicName(prevToken.getType()));
+        }
         return false;
     }
 
