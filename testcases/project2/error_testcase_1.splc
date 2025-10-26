@@ -1,7 +1,12 @@
-int a[1];
-struct b {
-    int a
+struct A{
+    int b;
+    char a[1]
 };
-int main() {
-    int a[1][2];
-}
+
+struct A {
+    int a;
+int main() {}
+
+struct A
+int a;
+};

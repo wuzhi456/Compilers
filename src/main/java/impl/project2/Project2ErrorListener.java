@@ -18,14 +18,14 @@ public class Project2ErrorListener extends BaseErrorListener {
 
     @Override
     public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line, int charPositionInLine, String msg, RecognitionException e) {
-//        System.err.println("DEBUG- Message:" + msg);
+        System.err.println("DEBUG- Message:" + msg);
 
         SplcParser parser = (SplcParser) recognizer;
         IntervalSet expected = parser.getExpectedTokens();
         Vocabulary vocabulary = recognizer.getVocabulary();
 
-//        // 打印调试信息
-//        printDebugInfo(recognizer, offendingSymbol, line, charPositionInLine, msg, vocabulary);
+        // 打印调试信息
+        printDebugInfo(recognizer, offendingSymbol, line, charPositionInLine, msg, vocabulary);
 
         // 特殊处理EOF错误
         if (offendingSymbol instanceof Token && ((Token) offendingSymbol).getType() == Token.EOF) {
@@ -56,16 +56,82 @@ public class Project2ErrorListener extends BaseErrorListener {
         String tokenText = token.getText();
         String tokenType = vocabulary.getSymbolicName(token.getType());
 
-//        System.err.println("DEBUG- Token type: " + tokenType + ", Text: '" + tokenText + "'");
-//        System.err.println("DEBUG- Expected: " + expected.toString(vocabulary));
+        System.err.println("DEBUG- Token type: " + tokenType + ", Text: '" + tokenText + "'");
+        System.err.println("DEBUG- Expected: " + expected.toString(vocabulary));
 
         if (msg.contains("no viable alternative") && isInArrayDeclarationContext(recognizer, token, vocabulary)) {
             return "RBRACK";
         }
 
-        // 优先检查结构体内部缺少分号的情况
+        // 新增：检测结构体缺少右大括号的情况 - 专门针对 struct A { int a; int main() {} 这种模式
+        String missingStructRBrace = detectMissingStructRBrace(recognizer, token, expected, vocabulary, msg);
+        if (missingStructRBrace != null) {
+            return missingStructRBrace;
+        }
+
+        // 新增：检测结构体内部数组声明缺少分号的情况
+        if (isMissingSemicolonInStructArray(recognizer, token, expected, vocabulary, msg)) {
+            return "SEMI";
+        }
+
+        // 如果在结构体定义内部，错误为 no viable alternative，且当前期望是类型说明符，
+        // 并且当前 token 为类型说明符，而前一个非隐藏 token 是 RBRACK 或 标识符，
+        // 则认定为上一成员声明缺少分号，返回 "SEMI"。
+        if (msg.contains("no viable alternative")
+                && expectsTypeSpecifier(expected, vocabulary)
+                && isTypeSpecifier(tokenType)
+                && isInStructDefinition(recognizer, token)) {
+            CommonTokenStream ts = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
+            Token prev = getPreviousNonHiddenToken(ts, token);
+            if (prev != null) {
+                String prevType = vocabulary.getSymbolicName(prev.getType());
+                if ("RBRACK".equals(prevType) || isIdentifierToken(prevType)) {
+                    return "SEMI";
+                }
+            }
+        }
+
+        // 与上面逻辑相同，但用更稳健的结构体体内判断（不依赖具体标识符词法名）
+        if (msg.contains("no viable alternative")
+                && expectsTypeSpecifier(expected, vocabulary)
+                && isTypeSpecifier(tokenType)
+                && isInStructDefinitionLoose(recognizer, token, vocabulary)) {
+            CommonTokenStream ts = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
+            Token prev = getPreviousNonHiddenToken(ts, token);
+            if (prev != null) {
+                String prevType = vocabulary.getSymbolicName(prev.getType());
+                if ("RBRACK".equals(prevType) || isIdentifierToken(prevType)) {
+                    return "SEMI";
+                }
+            }
+        }
+
+        // 优先检查结构体括号缺失错误
+        String structBracketError = detectStructBracketError(recognizer, token, expected, vocabulary, msg);
+        if (structBracketError != null) {
+            return structBracketError;
+        }
+
+        // 优先检查结构体内部缺少分号的情况（标识符结尾）
         if (isMissingSemicolonInStructBody(recognizer, token, expected, vocabulary, msg)) {
             return "SEMI";
+        }
+
+        // [新增 - 兜底：RBRACE 跟在 标识符/右方括号 后 且 expected 是类型] -> 缺少分号
+        // 该规则不依赖“结构体体内”的判断，避免 isInStructDefinition* 被分号早退误判。
+        if ("RBRACE".equals(tokenType)
+                && msg.contains("no viable alternative")
+                && expectsTypeSpecifier(expected, vocabulary)
+                && recognizer instanceof SplcParser
+                && ((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream) {
+            CommonTokenStream ts = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
+            Token prev = getPreviousNonHiddenToken(ts, token);
+            if (prev != null) {
+                String prevType = vocabulary.getSymbolicName(prev.getType());
+                if ("RBRACK".equals(prevType) || isIdentifierToken(prevType)) {
+                    return "SEMI";
+                }
+            }
         }
 
         // 1. 优先检查是否期望分号
@@ -84,7 +150,7 @@ public class Project2ErrorListener extends BaseErrorListener {
             return "SEMI";
         }
 
-        // 2. 检查结构体定义后缺少分号 - 这是第二个问题的关键修复
+        // 2. 检查结构体定义后缺少分号
         if (msg.contains("no viable alternative") && isTypeSpecifier(tokenType)) {
             Token prevToken = getPreviousNonHiddenToken(
                     (CommonTokenStream) ((SplcParser) recognizer).getInputStream(), token);
@@ -106,13 +172,13 @@ public class Project2ErrorListener extends BaseErrorListener {
             return getCorrespondingLeftBracket(tokenText);
         }
 
-        // 4. 检查缺少左括号的情况
+        // 4. 检查缺少左括号的情况（注意：此前已对 RBRACE 缺分号做了兜底，避免误判为缺 LBRACE）
         String bracket = extractMissingBracket(recognizer, msg, token, expected, vocabulary);
         if (bracket != null) {
             return bracket;
         }
 
-        // 5. 检查结构体内部缺少分号
+        // 5. 检查结构体内部缺少分号（早期通用逻辑）
         if (isMissingSemicolonInStruct(recognizer, token, expected, vocabulary, msg)) {
             return "SEMI";
         }
@@ -124,6 +190,147 @@ public class Project2ErrorListener extends BaseErrorListener {
 
         // 7. 默认情况：使用期望token中的第一个
         return findPrioritizedToken(expected, vocabulary);
+    }
+
+    /**
+     * 检测结构体内部数组声明缺少分号的情况
+     */
+    private boolean isMissingSemicolonInStructArray(Recognizer<?, ?> recognizer, Token token,
+                                                    IntervalSet expected, Vocabulary vocabulary, String msg) {
+        if (!(recognizer instanceof SplcParser) ||
+                !(((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream)) {
+            return false;
+        }
+
+        // 检查是否在结构体内部遇到右大括号，但期望类型说明符
+        if ("RBRACE".equals(vocabulary.getSymbolicName(token.getType())) &&
+                msg.contains("no viable alternative") &&
+                expectsTypeSpecifier(expected, vocabulary)) {
+
+            CommonTokenStream tokenStream = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
+            Token prevToken = getPreviousNonHiddenToken(tokenStream, token);
+
+            // 如果前一个token是右方括号，说明是数组声明缺少分号
+            if (prevToken != null && "RBRACK".equals(vocabulary.getSymbolicName(prevToken.getType()))) {
+                // 进一步确认是在结构体定义内部
+                return isInStructDefinition(recognizer, token);
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 专门检测结构体缺少右大括号的情况 - 针对 struct A { int a; int main() {} 这种模式
+     */
+    private String detectMissingStructRBrace(Recognizer<?, ?> recognizer, Token currentToken,
+                                             IntervalSet expected, Vocabulary vocabulary, String msg) {
+        if (!(recognizer instanceof SplcParser) ||
+                !(((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream)) {
+            return null;
+        }
+
+        CommonTokenStream tokenStream = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
+        String currentTokenType = vocabulary.getSymbolicName(currentToken.getType());
+
+        // 检查错误模式：在结构体内部遇到了函数定义的开始
+        if (msg.contains("no viable alternative") &&
+                expectsTypeSpecifier(expected, vocabulary) &&
+                "LPAREN".equals(currentTokenType)) {
+
+            // 向前查找，看是否在结构体定义内部
+            Token prevToken = getPreviousNonHiddenToken(tokenStream, currentToken);
+            if (prevToken != null && "Identifier".equals(vocabulary.getSymbolicName(prevToken.getType()))) {
+                Token typeToken = getPreviousNonHiddenToken(tokenStream, prevToken);
+                if (typeToken != null && isTypeSpecifier(vocabulary.getSymbolicName(typeToken.getType()))) {
+                    // 检查这个类型说明符是否在结构体内部
+                    if (isTokenInStructBody(tokenStream, typeToken, vocabulary)) {
+                        return "RBRACE";
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * 检查token是否在结构体定义体内
+     */
+    private boolean isTokenInStructBody(CommonTokenStream tokenStream, Token token, Vocabulary vocabulary) {
+        int braceCount = 0;
+
+        for (int i = token.getTokenIndex() - 1; i >= 0; i--) {
+            Token t = tokenStream.get(i);
+            if (t.getChannel() == Token.DEFAULT_CHANNEL) {
+                String tokenType = vocabulary.getSymbolicName(t.getType());
+
+                if ("RBRACE".equals(tokenType)) {
+                    braceCount++;
+                } else if ("LBRACE".equals(tokenType)) {
+                    braceCount--;
+                    if (braceCount < 0) {
+                        // 找到了未匹配的左大括号
+                        // 检查前面是否有STRUCT
+                        for (int j = i - 1; j >= 0; j--) {
+                            Token prev = tokenStream.get(j);
+                            if (prev.getChannel() == Token.DEFAULT_CHANNEL) {
+                                String prevType = vocabulary.getSymbolicName(prev.getType());
+                                if ("STRUCT".equals(prevType)) {
+                                    return true;
+                                } else if ("Identifier".equals(prevType)) {
+                                    continue;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                        return false;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 检测结构体括号缺失错误
+     */
+    private String detectStructBracketError(Recognizer<?, ?> recognizer, Token currentToken,
+                                            IntervalSet expected, Vocabulary vocabulary, String msg) {
+        if (!(recognizer instanceof SplcParser) ||
+                !(((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream)) {
+            return null;
+        }
+
+        CommonTokenStream tokenStream = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
+        String currentTokenType = vocabulary.getSymbolicName(currentToken.getType());
+
+        // 情况1: 结构体定义缺少左大括号
+        // 模式: struct Identifier 后直接跟类型说明符
+        if (msg.contains("no viable alternative") && isTypeSpecifier(currentTokenType)) {
+            Token prevToken = getPreviousNonHiddenToken(tokenStream, currentToken);
+            if (prevToken != null && "Identifier".equals(vocabulary.getSymbolicName(prevToken.getType()))) {
+                Token structToken = getPreviousNonHiddenToken(tokenStream, prevToken);
+                if (structToken != null && "STRUCT".equals(vocabulary.getSymbolicName(structToken.getType()))) {
+                    // struct Identifier 后直接遇到类型说明符，说明缺少左大括号
+                    return "LBRACE";
+                }
+            }
+        }
+
+        // 情况2: 结构体定义缺少右大括号
+        // 模式: 在结构体内部遇到函数定义或其他全局定义
+        if (msg.contains("no viable alternative") &&
+                ("LPAREN".equals(currentTokenType) || isTypeSpecifier(currentTokenType))) {
+
+            // 检查是否在未闭合的结构体定义中
+            if (isInUnclosedStructDefinition(recognizer, currentToken, vocabulary)) {
+                return "RBRACE";
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -272,6 +479,98 @@ public class Project2ErrorListener extends BaseErrorListener {
                         return false;
                     }
                 } else if ("SEMI".equals(tType) && braceCount == 0) {
+                    // 遇到了分号且没有未闭合的大括号，说明不在结构体定义中
+                    return false;
+                }
+            }
+        }
+        return false;
+    }
+
+    // 更宽松且对标识符词法名不敏感的“结构体体内”判断
+    private boolean isInStructDefinitionLoose(Recognizer<?, ?> recognizer, Token currentToken, Vocabulary vocabulary) {
+        if (!(recognizer instanceof SplcParser) ||
+                !(((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream)) {
+            return false;
+        }
+        CommonTokenStream ts = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
+
+        int brace = 0;
+        for (int i = currentToken.getTokenIndex() - 1; i >= 0; i--) {
+            Token t = ts.get(i);
+            if (t.getChannel() != Token.DEFAULT_CHANNEL) continue;
+
+            String tType = vocabulary.getSymbolicName(t.getType());
+            if ("RBRACE".equals(tType)) {
+                brace++;
+            } else if ("LBRACE".equals(tType)) {
+                brace--;
+                if (brace < 0) {
+                    // 找到了一个在当前点仍未闭合的左大括号，向前查找是否属于 struct 定义
+                    for (int j = i - 1; j >= 0; j--) {
+                        Token p = ts.get(j);
+                        if (p.getChannel() != Token.DEFAULT_CHANNEL) continue;
+                        String pType = vocabulary.getSymbolicName(p.getType());
+
+                        if ("STRUCT".equals(pType)) {
+                            return true; // 确认是 struct 定义体
+                        }
+                        // 遇到这些符号可以认为不是在有效的 struct 定义体之前
+                        if ("SEMI".equals(pType) || "RBRACE".equals(pType)) {
+                            return false;
+                        }
+                        // 允许跳过标识符、类型说明符等
+                    }
+                    return false;
+                }
+            } else if ("SEMI".equals(tType) && brace == 0) {
+                // 顶层遇到分号，说明在此之前没有未闭合的 '{' 可以归属到 struct
+                return false;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 检测是否在未闭合的结构体定义中
+     */
+    private boolean isInUnclosedStructDefinition(Recognizer<?, ?> recognizer, Token currentToken, Vocabulary vocabulary) {
+        if (!(recognizer instanceof SplcParser) ||
+                !(((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream)) {
+            return false;
+        }
+
+        CommonTokenStream tokenStream = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
+
+        // 向前查找未匹配的左大括号
+        int braceCount = 0;
+        for (int i = currentToken.getTokenIndex() - 1; i >= 0; i--) {
+            Token token = tokenStream.get(i);
+            if (token.getChannel() == Token.DEFAULT_CHANNEL) {
+                String tokenType = vocabulary.getSymbolicName(token.getType());
+
+                if ("RBRACE".equals(tokenType)) {
+                    braceCount++;
+                } else if ("LBRACE".equals(tokenType)) {
+                    braceCount--;
+                    if (braceCount < 0) {
+                        // 找到了未匹配的左大括号，检查前面是否有STRUCT
+                        for (int j = i - 1; j >= 0; j--) {
+                            Token prevToken = tokenStream.get(j);
+                            if (prevToken.getChannel() == Token.DEFAULT_CHANNEL) {
+                                String prevTokenType = vocabulary.getSymbolicName(prevToken.getType());
+                                if ("STRUCT".equals(prevTokenType)) {
+                                    return true; // 是结构体定义的左大括号
+                                } else if ("Identifier".equals(prevTokenType)) {
+                                    continue; // 继续向前找
+                                } else {
+                                    break; // 不是结构体定义
+                                }
+                            }
+                        }
+                        return false;
+                    }
+                } else if ("SEMI".equals(tokenType) && braceCount == 0) {
                     // 遇到了分号且没有未闭合的大括号，说明不在结构体定义中
                     return false;
                 }
@@ -552,5 +851,10 @@ public class Project2ErrorListener extends BaseErrorListener {
         if ("LPAREN".equals(lastTokenType)) return "RPAREN";
         if ("main".equals(lastTokenText) || "IDENTIFIER".equals(lastTokenType)) return "LPAREN";
         return null;
+    }
+
+    // 兼容不同词法名的标识符判断
+    private boolean isIdentifierToken(String tokenName) {
+        return "IDENTIFIER".equals(tokenName) || "Identifier".equals(tokenName) || "ID".equals(tokenName);
     }
 }
