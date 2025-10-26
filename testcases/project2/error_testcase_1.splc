@@ -1,4 +1,7 @@
 int a[1];
-int main()
+struct b {
+    int a
+};
+int main() {
     int a[1][2];
 }

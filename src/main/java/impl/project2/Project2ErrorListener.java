@@ -18,14 +18,14 @@ public class Project2ErrorListener extends BaseErrorListener {
 
     @Override
     public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line, int charPositionInLine, String msg, RecognitionException e) {
-        System.err.println("DEBUG- Message:" + msg);
+//        System.err.println("DEBUG- Message:" + msg);
 
         SplcParser parser = (SplcParser) recognizer;
         IntervalSet expected = parser.getExpectedTokens();
         Vocabulary vocabulary = recognizer.getVocabulary();
 
-        // 打印调试信息
-        printDebugInfo(recognizer, offendingSymbol, line, charPositionInLine, msg, vocabulary);
+//        // 打印调试信息
+//        printDebugInfo(recognizer, offendingSymbol, line, charPositionInLine, msg, vocabulary);
 
         // 特殊处理EOF错误
         if (offendingSymbol instanceof Token && ((Token) offendingSymbol).getType() == Token.EOF) {
@@ -44,7 +44,7 @@ public class Project2ErrorListener extends BaseErrorListener {
     }
 
     /**
-     * 提取缺失的符号 - 修改后的逻辑
+     * 提取缺失的符号
      */
     private String extractMissingSymbol(Recognizer<?, ?> recognizer, String msg, Object offendingSymbol,
                                         IntervalSet expected, Vocabulary vocabulary) {
@@ -56,23 +56,30 @@ public class Project2ErrorListener extends BaseErrorListener {
         String tokenText = token.getText();
         String tokenType = vocabulary.getSymbolicName(token.getType());
 
-        System.err.println("DEBUG- Token type: " + tokenType + ", Text: '" + tokenText + "'");
-        System.err.println("DEBUG- Expected: " + expected.toString(vocabulary));
+//        System.err.println("DEBUG- Token type: " + tokenType + ", Text: '" + tokenText + "'");
+//        System.err.println("DEBUG- Expected: " + expected.toString(vocabulary));
 
         if (msg.contains("no viable alternative") && isInArrayDeclarationContext(recognizer, token, vocabulary)) {
             return "RBRACK";
         }
 
-        // 1. 优先检查是否期望分号 - 这是第一个问题的关键修复
+        // 优先检查结构体内部缺少分号的情况
+        if (isMissingSemicolonInStructBody(recognizer, token, expected, vocabulary, msg)) {
+            return "SEMI";
+        }
+
+        // 1. 优先检查是否期望分号
         if (expectsSemi(expected, vocabulary)) {
             // 如果是右大括号但期望分号，应该报告分号缺失
             if ("RBRACE".equals(tokenType) && msg.contains("expecting {'=', ';'}")) {
                 return "SEMI";
             }
-            // 新增：检查是否在二维数组声明中缺少左方括号
+
+            // 检查是否在二维数组声明中缺少左方括号
             if (isMissingLeftBracketIn2DArray(recognizer, token, vocabulary)) {
                 return "LBRACK";
             }
+
             // 其他期望分号的情况
             return "SEMI";
         }
@@ -117,6 +124,34 @@ public class Project2ErrorListener extends BaseErrorListener {
 
         // 7. 默认情况：使用期望token中的第一个
         return findPrioritizedToken(expected, vocabulary);
+    }
+
+    /**
+     * 检测结构体内部缺少分号的情况
+     */
+    private boolean isMissingSemicolonInStructBody(Recognizer<?, ?> recognizer, Token token,
+                                                   IntervalSet expected, Vocabulary vocabulary, String msg) {
+        if (!(recognizer instanceof SplcParser) ||
+                !(((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream)) {
+            return false;
+        }
+
+        // 检查是否在结构体内部遇到右大括号，但期望类型说明符
+        if ("RBRACE".equals(vocabulary.getSymbolicName(token.getType())) &&
+                msg.contains("no viable alternative") &&
+                expectsTypeSpecifier(expected, vocabulary)) {
+
+            CommonTokenStream tokenStream = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
+            Token prevToken = getPreviousNonHiddenToken(tokenStream, token);
+
+            // 如果前一个token是标识符，说明是结构体成员声明缺少分号
+            if (prevToken != null && "Identifier".equals(vocabulary.getSymbolicName(prevToken.getType()))) {
+                // 进一步确认是在结构体定义内部
+                return isInStructDefinition(recognizer, token);
+            }
+        }
+
+        return false;
     }
 
     /**
