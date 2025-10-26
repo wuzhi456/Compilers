@@ -18,14 +18,14 @@ public class Project2ErrorListener extends BaseErrorListener {
 
     @Override
     public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line, int charPositionInLine, String msg, RecognitionException e) {
-//        System.err.println("DEBUG- Message:" + msg);
+        System.err.println("DEBUG- Message:" + msg);
 
         SplcParser parser = (SplcParser) recognizer;
         IntervalSet expected = parser.getExpectedTokens();
         Vocabulary vocabulary = recognizer.getVocabulary();
 
-//        // 打印调试信息
-//        printDebugInfo(recognizer, offendingSymbol, line, charPositionInLine, msg, vocabulary);
+        // 打印调试信息
+        printDebugInfo(recognizer, offendingSymbol, line, charPositionInLine, msg, vocabulary);
 
         // 特殊处理EOF错误
         if (offendingSymbol instanceof Token && ((Token) offendingSymbol).getType() == Token.EOF) {
@@ -56,8 +56,8 @@ public class Project2ErrorListener extends BaseErrorListener {
         String tokenText = token.getText();
         String tokenType = vocabulary.getSymbolicName(token.getType());
 
-//        System.err.println("DEBUG- Token type: " + tokenType + ", Text: '" + tokenText + "'");
-//        System.err.println("DEBUG- Expected: " + expected.toString(vocabulary));
+        System.err.println("DEBUG- Token type: " + tokenType + ", Text: '" + tokenText + "'");
+        System.err.println("DEBUG- Expected: " + expected.toString(vocabulary));
 
         if (msg.contains("no viable alternative") && isInArrayDeclarationContext(recognizer, token, vocabulary)) {
             return "RBRACK";
@@ -72,6 +72,11 @@ public class Project2ErrorListener extends BaseErrorListener {
         // 新增：检测结构体内部数组声明缺少分号的情况
         if (isMissingSemicolonInStructArray(recognizer, token, expected, vocabulary, msg)) {
             return "SEMI";
+        }
+
+        if (msg.contains("no viable alternative")
+                && isMissingLeftBracketIn2DArray(recognizer, token, vocabulary)) {
+            return "LBRACK";
         }
 
         // 如果在结构体定义内部，错误为 no viable alternative，且当前期望是类型说明符，

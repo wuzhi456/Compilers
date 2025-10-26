@@ -1,7 +1,7 @@
 struct A{
     char c[2];
-    int b;
-    char a[1]
+    int b[3]2];
+    char a[1];
 };
 
 struct A {
