@@ -18,14 +18,14 @@ public class Project2ErrorListener extends BaseErrorListener {
 
     @Override
     public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line, int charPositionInLine, String msg, RecognitionException e) {
-//        System.err.println("DEBUG- Message:" + msg);
+        System.err.println("DEBUG- Message:" + msg);
 
         SplcParser parser = (SplcParser) recognizer;
         IntervalSet expected = parser.getExpectedTokens();
         Vocabulary vocabulary = recognizer.getVocabulary();
 
-//        // 打印调试信息
-//        printDebugInfo(recognizer, offendingSymbol, line, charPositionInLine, msg, vocabulary);
+        // 打印调试信息
+        printDebugInfo(recognizer, offendingSymbol, line, charPositionInLine, msg, vocabulary);
 
         // 特殊处理EOF错误
         if (offendingSymbol instanceof Token && ((Token) offendingSymbol).getType() == Token.EOF) {
@@ -56,14 +56,22 @@ public class Project2ErrorListener extends BaseErrorListener {
         String tokenText = token.getText();
         String tokenType = vocabulary.getSymbolicName(token.getType());
 
-//        System.err.println("DEBUG- Token type: " + tokenType + ", Text: '" + tokenText + "'");
-//        System.err.println("DEBUG- Expected: " + expected.toString(vocabulary));
+        System.err.println("DEBUG- Token type: " + tokenType + ", Text: '" + tokenText + "'");
+        System.err.println("DEBUG- Expected: " + expected.toString(vocabulary));
+
+        if (msg.contains("no viable alternative") && isInArrayDeclarationContext(recognizer, token, vocabulary)) {
+            return "RBRACK";
+        }
 
         // 1. 优先检查是否期望分号 - 这是第一个问题的关键修复
         if (expectsSemi(expected, vocabulary)) {
             // 如果是右大括号但期望分号，应该报告分号缺失
             if ("RBRACE".equals(tokenType) && msg.contains("expecting {'=', ';'}")) {
                 return "SEMI";
+            }
+            // 新增：检查是否在二维数组声明中缺少左方括号
+            if (isMissingLeftBracketIn2DArray(recognizer, token, vocabulary)) {
+                return "LBRACK";
             }
             // 其他期望分号的情况
             return "SEMI";
@@ -109,6 +117,60 @@ public class Project2ErrorListener extends BaseErrorListener {
 
         // 7. 默认情况：使用期望token中的第一个
         return findPrioritizedToken(expected, vocabulary);
+    }
+
+    /**
+     * 检测是否在数组声明上下文中缺少右方括号
+     */
+    private boolean isInArrayDeclarationContext(Recognizer<?, ?> recognizer, Token currentToken, Vocabulary vocabulary) {
+        if (!(recognizer instanceof SplcParser) ||
+                !(((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream)) {
+            return false;
+        }
+
+        CommonTokenStream tokenStream = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
+
+        // 检查当前token是否是分号，且前面有左方括号和数字/标识符
+        if ("SEMI".equals(vocabulary.getSymbolicName(currentToken.getType()))) {
+            Token prevToken = getPreviousNonHiddenToken(tokenStream, currentToken);
+            if (prevToken != null) {
+                String prevTokenType = vocabulary.getSymbolicName(prevToken.getType());
+
+                // 如果前一个token是数字或标识符，继续向前找左方括号
+                if ("Number".equals(prevTokenType) || "Identifier".equals(prevTokenType)) {
+                    Token lBracketToken = getPreviousNonHiddenToken(tokenStream, prevToken);
+                    if (lBracketToken != null && "LBRACK".equals(vocabulary.getSymbolicName(lBracketToken.getType()))) {
+                        // 找到了左方括号，说明这是数组声明缺少右方括号
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * 检测是否在二维数组声明中缺少左方括号
+     */
+    private boolean isMissingLeftBracketIn2DArray(Recognizer<?, ?> recognizer, Token currentToken, Vocabulary vocabulary) {
+        if (!(recognizer instanceof SplcParser) ||
+                !(((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream)) {
+            return false;
+        }
+
+        CommonTokenStream tokenStream = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
+
+        // 检查当前token是否是数字，且前面有右方括号
+        if ("Number".equals(vocabulary.getSymbolicName(currentToken.getType()))) {
+            Token prevToken = getPreviousNonHiddenToken(tokenStream, currentToken);
+            if (prevToken != null && "RBRACK".equals(vocabulary.getSymbolicName(prevToken.getType()))) {
+                // 在右方括号后直接遇到数字，这是二维数组声明缺少左方括号
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
