@@ -22,8 +22,8 @@ public class ConstExprVisitor extends SplcBaseVisitor<Integer> {
                     } catch (NumberFormatException ex) {
                         return null;
                     }
-                case SplcParser.Char:
-                    return parseCharLiteral(t.getText());
+//                case SplcParser.Char:
+//                    return parseCharLiteral(t.getText());
                 default:
                     return null;
             }

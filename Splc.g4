@@ -16,8 +16,8 @@ program: globalDef* EOF;
 
 globalDef
     : specifier Identifier LPAREN funcArgs RPAREN LBRACE statement* RBRACE   // function definition
-    | specifier varDec SEMI                                                   // global variable definition
-    | specifier SEMI                                                          // global struct declaration
+    | specifier varDec (ASSIGN expression)? SEMI                             // global variable definition
+    | specifier SEMI                                                         // global struct declaration
     ;
 
 specifier
@@ -31,10 +31,7 @@ varDec
     : Identifier
     | LPAREN varDec RPAREN
     | varDec LBRACK Number RBRACK
-    ;
-
-pointer
-    : STAR pointer?
+    | STAR varDec
     ;
 
 funcArgs
@@ -95,7 +92,7 @@ STRUCT  : 'struct';
 RETURN  : 'return';
 IF      : 'if';
 ELSE    : 'else';
-WHILE   : 'whlie';
+WHILE   : 'while';
 
 // ---------- Operators ----------
 ASSIGN   : '=';
