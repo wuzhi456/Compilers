@@ -5,13 +5,7 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="ba20fe1f-c0d1-47b7-9f89-0d1c8d818107" name="更改" comment="">
-      <change afterPath="$PROJECT_DIR$/testcases/project2/correct_testcase_x.splc" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/Main.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/Main.class" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/project2/Project2ErrorListener.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/project2/Project2ErrorListener.class" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/main/java/Main.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/Main.java" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/main/java/impl/project2/Project2ErrorListener.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/impl/project2/Project2ErrorListener.java" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/testcases/project2/error_testcase_1.splc" beforeDir="false" afterPath="$PROJECT_DIR$/testcases/project2/error_testcase_1.splc" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

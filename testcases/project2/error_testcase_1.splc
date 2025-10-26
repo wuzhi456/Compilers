@@ -1,4 +1,5 @@
 struct A{
+    char c[2];
     int b;
     char a[1]
 };

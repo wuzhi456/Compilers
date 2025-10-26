@@ -18,14 +18,14 @@ public class Project2ErrorListener extends BaseErrorListener {
 
     @Override
     public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line, int charPositionInLine, String msg, RecognitionException e) {
-        System.err.println("DEBUG- Message:" + msg);
+//        System.err.println("DEBUG- Message:" + msg);
 
         SplcParser parser = (SplcParser) recognizer;
         IntervalSet expected = parser.getExpectedTokens();
         Vocabulary vocabulary = recognizer.getVocabulary();
 
-        // 打印调试信息
-        printDebugInfo(recognizer, offendingSymbol, line, charPositionInLine, msg, vocabulary);
+//        // 打印调试信息
+//        printDebugInfo(recognizer, offendingSymbol, line, charPositionInLine, msg, vocabulary);
 
         // 特殊处理EOF错误
         if (offendingSymbol instanceof Token && ((Token) offendingSymbol).getType() == Token.EOF) {
@@ -56,8 +56,8 @@ public class Project2ErrorListener extends BaseErrorListener {
         String tokenText = token.getText();
         String tokenType = vocabulary.getSymbolicName(token.getType());
 
-        System.err.println("DEBUG- Token type: " + tokenType + ", Text: '" + tokenText + "'");
-        System.err.println("DEBUG- Expected: " + expected.toString(vocabulary));
+//        System.err.println("DEBUG- Token type: " + tokenType + ", Text: '" + tokenText + "'");
+//        System.err.println("DEBUG- Expected: " + expected.toString(vocabulary));
 
         if (msg.contains("no viable alternative") && isInArrayDeclarationContext(recognizer, token, vocabulary)) {
             return "RBRACK";
