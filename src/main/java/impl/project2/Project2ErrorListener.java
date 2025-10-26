@@ -122,6 +122,43 @@ public class Project2ErrorListener extends BaseErrorListener {
             return "SEMI";
         }
 
+        if ("SEMI".equals(tokenType)
+                && msg.contains("no viable alternative")
+                && expectsTypeSpecifier(expected, vocabulary)
+                && recognizer instanceof SplcParser
+                && ((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream) {
+
+            // 处于结构体体内的宽松判断，避免被先前成员的分号早退误判
+            if (isInStructDefinitionLoose(recognizer, token, vocabulary) || isInStructDefinition(recognizer, token)) {
+                CommonTokenStream ts = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
+                Token prev = getPreviousNonHiddenToken(ts, token);
+                if (prev != null) {
+                    String prevType = vocabulary.getSymbolicName(prev.getType());
+                    // 前一个可见 token 是一个完整成员的“典型结束形态”
+                    if ("SEMI".equals(prevType) || "RBRACK".equals(prevType) || isIdentifierToken(prevType)) {
+                        return "RBRACE";
+                    }
+                }
+            }
+        }
+
+        if ("SEMI".equals(tokenType)
+                && msg.contains("no viable alternative")
+                && expectsTypeSpecifier(expected, vocabulary)
+                && recognizer instanceof SplcParser
+                && ((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream) {
+
+            CommonTokenStream ts = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
+            Token prev = getPreviousNonHiddenToken(ts, token);
+            if (prev != null) {
+                String prevType = vocabulary.getSymbolicName(prev.getType());
+                // 典型成员结束形态：; 或 ] 或 标识符
+                if ("SEMI".equals(prevType) || "RBRACK".equals(prevType) || isIdentifierToken(prevType)) {
+                    return "RBRACE";
+                }
+            }
+        }
+
         // [新增 - 兜底：RBRACE 跟在 标识符/右方括号 后 且 expected 是类型] -> 缺少分号
         // 该规则不依赖“结构体体内”的判断，避免 isInStructDefinition* 被分号早退误判。
         if ("RBRACE".equals(tokenType)
