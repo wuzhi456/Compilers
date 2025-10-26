@@ -18,7 +18,7 @@ public class Project2ErrorListener extends BaseErrorListener {
 
     @Override
     public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line, int charPositionInLine, String msg, RecognitionException e) {
-        System.err.println("DEBUG- Message:" + msg);
+//        System.err.println("DEBUG- Message:"+msg);
         SplcParser parser = (SplcParser) recognizer;
         IntervalSet expected = parser.getExpectedTokens();
         String tokenName = null;
@@ -26,41 +26,39 @@ public class Project2ErrorListener extends BaseErrorListener {
 
         Vocabulary vocabulary = recognizer.getVocabulary();
 
-        System.err.println("Expected tokens: " + expected.toString(vocabulary));
-        System.err.println("Offending symbol: " + offendingSymbol);
-        System.err.println("Error at line " + line + ":" + charPositionInLine);
-
-        if (offendingSymbol instanceof Token) {
-            Token token = (Token) offendingSymbol;
-            System.err.println("Offending token type: " + vocabulary.getSymbolicName(token.getType()));
-            System.err.println("Offending token text: '" + token.getText() + "'");
-            System.err.println("Offending token line: " + token.getLine());
-        }
+//        System.err.println("Expected tokens: " + expected.toString(vocabulary));
+//        System.err.println("Offending symbol: " + offendingSymbol);
+//        System.err.println("Error at line " + line + ":" + charPositionInLine);
+//        if (offendingSymbol instanceof Token) {
+//            Token token = (Token) offendingSymbol;
+//            System.err.println("Offending token type: " + vocabulary.getSymbolicName(token.getType()));
+//            System.err.println("Offending token text: '" + token.getText() + "'");
+//            System.err.println("Offending token line: " + token.getLine());
+//        }
 
         // 特殊处理EOF错误
-        if (offendingSymbol instanceof Token && ((Token) offendingSymbol).getType() == Token.EOF) {
-            handleEOFError(recognizer, (Token) offendingSymbol, msg, e);
+        if (offendingSymbol instanceof Token && ((Token)offendingSymbol).getType() == Token.EOF) {
+            handleEOFError(recognizer, (Token)offendingSymbol, msg, e);
             return;
         }
 
-        // 按优先级检查各种错误类型
-        if (isMissingSemicolonInStruct(recognizer, offendingSymbol, expected, vocabulary, msg)) {
+        // 新增：通过错误消息快速确定缺失的括号类型
+        tokenName = extractMissingBracketFromMessage(recognizer, msg, offendingSymbol, vocabulary);
+        if (tokenName != null) {
+            reportLine = calculateReportLine(line, offendingSymbol, parser);
+        }
+        // 检查是否是结构体内部缺少分号的错误
+        else if (isMissingSemicolonInStruct(recognizer, offendingSymbol, expected, vocabulary, msg)) {
             tokenName = "SEMI";
             reportLine = getPreviousTokenLine(recognizer, offendingSymbol);
-        } else if (isMissingLeftParenthesis(recognizer, offendingSymbol, expected, vocabulary, msg)) {
+        }
+        // 检查是否是函数调用缺少左括号的情况
+        else if (isMissingFunctionCallParenthesis(recognizer, offendingSymbol, expected, vocabulary, msg)) {
             tokenName = "LPAREN";
             reportLine = calculateReportLine(line, offendingSymbol, parser);
-        } else if (isMissingFunctionCallParenthesis(recognizer, offendingSymbol, expected, vocabulary, msg)) {
-            tokenName = "LPAREN";
-            reportLine = calculateReportLine(line, offendingSymbol, parser);
-        }else if (isMissingLeftBracket(recognizer, offendingSymbol, expected, vocabulary, msg)) {
-            tokenName = "LBRACK";
-            reportLine = calculateReportLine(line, offendingSymbol, parser);
-        } else if (isMissingLeftBrace(recognizer, offendingSymbol, expected, vocabulary, msg)) {
-            tokenName = "LBRACE";
-            reportLine = calculateReportLine(line, offendingSymbol, parser);
-        } else {
-            // 其他情况使用通用处理逻辑
+        }
+        else {
+            // 其他情况的处理逻辑
             tokenName = findPrioritizedToken(expected, vocabulary);
             reportLine = calculateReportLine(line, offendingSymbol, parser);
         }
@@ -75,6 +73,49 @@ public class Project2ErrorListener extends BaseErrorListener {
     }
 
     // ==================== 工具方法 ====================
+
+    /**
+     * 从错误消息中提取缺失的括号类型
+     */
+    private String extractMissingBracketFromMessage(Recognizer<?, ?> recognizer, String msg, Object offendingSymbol, Vocabulary vocabulary) {
+        if (!(offendingSymbol instanceof Token)) {
+            return null;
+        }
+
+        Token token = (Token) offendingSymbol;
+        String tokenText = token.getText();
+
+        // 检查是否是右括号不匹配的情况
+        if (msg.contains("mismatched input '" + tokenText + "'") ||
+                msg.contains("extraneous input '" + tokenText + "'")) {
+
+            if ("]".equals(tokenText)) {
+                return "LBRACK";
+            } else if (")".equals(tokenText)) {
+                return "LPAREN";
+            } else if ("}".equals(tokenText)) {
+                return "LBRACE";
+            }
+        }
+
+        // 检查是否是缺少左括号导致的其他错误
+        if (msg.contains("no viable alternative")) {
+            // 检查当前token是否是类型说明符，并且前一个token是标识符
+            if (isPrecededByIdentifier(recognizer, token, vocabulary)) {
+                String tokenType = vocabulary.getSymbolicName(token.getType());
+                if (isTypeSpecifier(tokenType)) {
+                    // 检查是否在结构体定义上下文中
+                    if (isInStructDefinitionContext(recognizer, token)) {
+                        return "LBRACE";
+                    } else {
+                        return "LPAREN";
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
 
     /**
      * 计算报告行号
