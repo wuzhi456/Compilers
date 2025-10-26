@@ -18,107 +18,173 @@ public class Project2ErrorListener extends BaseErrorListener {
 
     @Override
     public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol, int line, int charPositionInLine, String msg, RecognitionException e) {
-//        System.err.println("DEBUG- Message:"+msg);
+//        System.err.println("DEBUG- Message:" + msg);
+
         SplcParser parser = (SplcParser) recognizer;
         IntervalSet expected = parser.getExpectedTokens();
-        String tokenName = null;
-        int reportLine = line;
-
         Vocabulary vocabulary = recognizer.getVocabulary();
 
-//        System.err.println("Expected tokens: " + expected.toString(vocabulary));
-//        System.err.println("Offending symbol: " + offendingSymbol);
-//        System.err.println("Error at line " + line + ":" + charPositionInLine);
-//        if (offendingSymbol instanceof Token) {
-//            Token token = (Token) offendingSymbol;
-//            System.err.println("Offending token type: " + vocabulary.getSymbolicName(token.getType()));
-//            System.err.println("Offending token text: '" + token.getText() + "'");
-//            System.err.println("Offending token line: " + token.getLine());
-//        }
+//        // 打印调试信息
+//        printDebugInfo(recognizer, offendingSymbol, line, charPositionInLine, msg, vocabulary);
 
         // 特殊处理EOF错误
-        if (offendingSymbol instanceof Token && ((Token)offendingSymbol).getType() == Token.EOF) {
-            handleEOFError(recognizer, (Token)offendingSymbol, msg, e);
+        if (offendingSymbol instanceof Token && ((Token) offendingSymbol).getType() == Token.EOF) {
+            handleEOFError(recognizer, (Token) offendingSymbol, msg, e);
             return;
         }
 
-        // 新增：通过错误消息快速确定缺失的括号类型
-        tokenName = extractMissingBracketFromMessage(recognizer, msg, offendingSymbol, vocabulary);
+        String tokenName = extractMissingSymbol(recognizer, msg, offendingSymbol, expected, vocabulary);
+        int reportLine = calculateReportLine(line, offendingSymbol, parser);
+
         if (tokenName != null) {
-            reportLine = calculateReportLine(line, offendingSymbol, parser);
+            MissingSymbolError missingSymbol = new MissingSymbolError(tokenName, reportLine);
+            this.grader.getWriter().println(missingSymbol);
+            throw new ParseCancellationException();
         }
-        // 检查是否是结构体内部缺少分号的错误
-        else if (isMissingSemicolonInStruct(recognizer, offendingSymbol, expected, vocabulary, msg)) {
-            tokenName = "SEMI";
-            reportLine = getPreviousTokenLine(recognizer, offendingSymbol);
-        }
-        // 检查是否是函数调用缺少左括号的情况
-        else if (isMissingFunctionCallParenthesis(recognizer, offendingSymbol, expected, vocabulary, msg)) {
-            tokenName = "LPAREN";
-            reportLine = calculateReportLine(line, offendingSymbol, parser);
-        }
-        else {
-            // 其他情况的处理逻辑
-            tokenName = findPrioritizedToken(expected, vocabulary);
-            reportLine = calculateReportLine(line, offendingSymbol, parser);
-        }
-
-        if (tokenName == null) {
-            return;
-        }
-
-        MissingSymbolError missingSymbol = new MissingSymbolError(tokenName, reportLine);
-        this.grader.getWriter().println(missingSymbol);
-        throw new ParseCancellationException();
     }
 
-    // ==================== 工具方法 ====================
-
     /**
-     * 从错误消息中提取缺失的括号类型
+     * 提取缺失的符号 - 修改后的逻辑
      */
-    private String extractMissingBracketFromMessage(Recognizer<?, ?> recognizer, String msg, Object offendingSymbol, Vocabulary vocabulary) {
+    private String extractMissingSymbol(Recognizer<?, ?> recognizer, String msg, Object offendingSymbol,
+                                        IntervalSet expected, Vocabulary vocabulary) {
         if (!(offendingSymbol instanceof Token)) {
             return null;
         }
 
         Token token = (Token) offendingSymbol;
         String tokenText = token.getText();
+        String tokenType = vocabulary.getSymbolicName(token.getType());
 
-        // 检查是否是右括号不匹配的情况
-        if (msg.contains("mismatched input '" + tokenText + "'") ||
-                msg.contains("extraneous input '" + tokenText + "'")) {
+//        System.err.println("DEBUG- Token type: " + tokenType + ", Text: '" + tokenText + "'");
+//        System.err.println("DEBUG- Expected: " + expected.toString(vocabulary));
 
-            if ("]".equals(tokenText)) {
-                return "LBRACK";
-            } else if (")".equals(tokenText)) {
-                return "LPAREN";
-            } else if ("}".equals(tokenText)) {
-                return "LBRACE";
+        // 1. 优先检查是否期望分号 - 这是第一个问题的关键修复
+        if (expectsSemi(expected, vocabulary)) {
+            // 如果是右大括号但期望分号，应该报告分号缺失
+            if ("RBRACE".equals(tokenType) && msg.contains("expecting {'=', ';'}")) {
+                return "SEMI";
+            }
+            // 其他期望分号的情况
+            return "SEMI";
+        }
+
+        // 2. 检查结构体定义后缺少分号 - 这是第二个问题的关键修复
+        if (msg.contains("no viable alternative") && isTypeSpecifier(tokenType)) {
+            Token prevToken = getPreviousNonHiddenToken(
+                    (CommonTokenStream) ((SplcParser) recognizer).getInputStream(), token);
+
+            if (prevToken != null && "RBRACE".equals(vocabulary.getSymbolicName(prevToken.getType()))) {
+                // 在右大括号后直接遇到类型说明符，说明结构体定义缺少分号
+                return "SEMI";
             }
         }
 
-        // 检查是否是缺少左括号导致的其他错误
+        // 3. 直接检查不匹配的右括号
+        if ((msg.contains("mismatched input '" + tokenText + "'") ||
+                msg.contains("extraneous input '" + tokenText + "'")) &&
+                isRightBracket(tokenText)) {
+            // 但如果期望的是分号，应该优先返回分号
+            if (expectsSemi(expected, vocabulary)) {
+                return "SEMI";
+            }
+            return getCorrespondingLeftBracket(tokenText);
+        }
+
+        // 4. 检查缺少左括号的情况
+        String bracket = extractMissingBracket(recognizer, msg, token, expected, vocabulary);
+        if (bracket != null) {
+            return bracket;
+        }
+
+        // 5. 检查结构体内部缺少分号
+        if (isMissingSemicolonInStruct(recognizer, token, expected, vocabulary, msg)) {
+            return "SEMI";
+        }
+
+        // 6. 检查函数调用缺少左括号
+        if (isMissingFunctionCallParenthesis(recognizer, token, expected, vocabulary, msg)) {
+            return "LPAREN";
+        }
+
+        // 7. 默认情况：使用期望token中的第一个
+        return findPrioritizedToken(expected, vocabulary);
+    }
+
+    /**
+     * 提取缺失的括号 - 简化逻辑
+     */
+    private String extractMissingBracket(Recognizer<?, ?> recognizer, String msg, Token token,
+                                         IntervalSet expected, Vocabulary vocabulary) {
+        String tokenType = vocabulary.getSymbolicName(token.getType());
+
+        // 情况1: no viable alternative 错误
         if (msg.contains("no viable alternative")) {
-            // 检查当前token是否是类型说明符，并且前一个token是标识符
-            if (isPrecededByIdentifier(recognizer, token, vocabulary)) {
-                String tokenType = vocabulary.getSymbolicName(token.getType());
-                if (isTypeSpecifier(tokenType)) {
-                    // 检查是否在结构体定义上下文中
-                    if (isInStructDefinitionContext(recognizer, token)) {
-                        return "LBRACE";
-                    } else {
-                        return "LPAREN";
-                    }
+            // 右括号后期望类型说明符
+            if (isRightBracketType(tokenType) && expectsTypeSpecifier(expected, vocabulary)) {
+                return getCorrespondingLeftBracketFromType(tokenType);
+            }
+
+            // 类型说明符前有标识符 - 简化这个逻辑
+            if (isPrecededByIdentifier(recognizer, token, vocabulary) &&
+                    isTypeSpecifier(tokenType)) {
+                // 更准确地判断是否在结构体定义中
+                if (isInStructDefinition(recognizer, token)) {
+                    return "LBRACE";
                 }
+                return "LPAREN";
             }
         }
 
         return null;
     }
 
+    // ==================== 新增和改进的方法 ====================
+
     /**
-     * 计算报告行号
+     * 更准确地判断是否在结构体定义中
+     */
+    private boolean isInStructDefinition(Recognizer<?, ?> recognizer, Token currentToken) {
+        CommonTokenStream tokenStream = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
+        Token token = currentToken;
+
+        // 向前查找，看是否有未闭合的结构体定义
+        int braceCount = 0;
+        for (int i = currentToken.getTokenIndex() - 1; i >= 0; i--) {
+            Token t = tokenStream.get(i);
+            if (t.getChannel() == Token.DEFAULT_CHANNEL) {
+                String tType = recognizer.getVocabulary().getSymbolicName(t.getType());
+
+                if ("RBRACE".equals(tType)) {
+                    braceCount++;
+                } else if ("LBRACE".equals(tType)) {
+                    braceCount--;
+                    if (braceCount < 0) {
+                        // 找到了未匹配的左大括号，检查前面是否有STRUCT
+                        for (int j = i - 1; j >= 0; j--) {
+                            Token prevToken = tokenStream.get(j);
+                            if (prevToken.getChannel() == Token.DEFAULT_CHANNEL) {
+                                String prevType = recognizer.getVocabulary().getSymbolicName(prevToken.getType());
+                                if ("STRUCT".equals(prevType)) {
+                                    return true;
+                                } else if (!"Identifier".equals(prevType)) {
+                                    break;
+                                }
+                            }
+                        }
+                        return false;
+                    }
+                } else if ("SEMI".equals(tType) && braceCount == 0) {
+                    // 遇到了分号且没有未闭合的大括号，说明不在结构体定义中
+                    return false;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 报告行号计算
      */
     private int calculateReportLine(int line, Object offendingSymbol, Parser parser) {
         int reportLine = Math.max(0, line - 1);
@@ -134,31 +200,23 @@ public class Project2ErrorListener extends BaseErrorListener {
         return reportLine;
     }
 
-    /**
-     * 获取前一个token的行号（用于结构体内部缺少分号的情况）
-     */
-    private int getPreviousTokenLine(Recognizer<?, ?> recognizer, Object offendingSymbol) {
-        if (offendingSymbol instanceof Token && recognizer instanceof SplcParser) {
-            SplcParser parser = (SplcParser) recognizer;
-            if (parser.getInputStream() instanceof CommonTokenStream) {
-                CommonTokenStream ts = (CommonTokenStream) parser.getInputStream();
-                Token offendingToken = (Token) offendingSymbol;
-                for (int i = offendingToken.getTokenIndex() - 1; i >= 0; i--) {
-                    Token prev = ts.get(i);
-                    if (prev.getChannel() == Token.DEFAULT_CHANNEL) {
-                        return prev.getLine();
-                    }
-                }
-            }
+    // ==================== 保留的核心工具方法 ====================
+
+    private void printDebugInfo(Recognizer<?, ?> recognizer, Object offendingSymbol, int line,
+                                int charPositionInLine, String msg, Vocabulary vocabulary) {
+        System.err.println("Expected tokens: " + recognizer.getVocabulary().getDisplayName(recognizer.getVocabulary().getMaxTokenType()));
+        System.err.println("Offending symbol: " + offendingSymbol);
+        System.err.println("Error at line " + line + ":" + charPositionInLine);
+
+        if (offendingSymbol instanceof Token) {
+            Token token = (Token) offendingSymbol;
+            System.err.println("Offending token type: " + vocabulary.getSymbolicName(token.getType()));
+            System.err.println("Offending token text: '" + token.getText() + "'");
+            System.err.println("Offending token line: " + token.getLine());
         }
-        return 0;
     }
 
-    /**
-     * 查找优先的token名称
-     */
     private String findPrioritizedToken(IntervalSet expected, Vocabulary vocabulary) {
-        // 优先检查常见的结构结束符号
         String[] prioritizedTokens = {"')'", "'}'", "';'"};
 
         for (String prioritizedToken : prioritizedTokens) {
@@ -175,7 +233,6 @@ public class Project2ErrorListener extends BaseErrorListener {
             }
         }
 
-        // 如果没有找到优先的token，返回第一个非EOF的期望token
         for (int tokenType : expected.toArray()) {
             if (tokenType != Token.EOF) {
                 return vocabulary.getSymbolicName(tokenType);
@@ -185,227 +242,112 @@ public class Project2ErrorListener extends BaseErrorListener {
         return null;
     }
 
-    // ==================== 错误检测方法 ====================
+    // ==================== 辅助检测方法 ====================
 
-    /**
-     * 检查是否是结构体内部缺少分号的错误
-     */
-    private boolean isMissingSemicolonInStruct(Recognizer<?, ?> recognizer, Object offendingSymbol,
+    private boolean isRightBracket(String tokenText) {
+        return "]".equals(tokenText) || ")".equals(tokenText) || "}".equals(tokenText);
+    }
+
+    private boolean isRightBracketType(String tokenType) {
+        return "RBRACK".equals(tokenType) || "RPAREN".equals(tokenType) || "RBRACE".equals(tokenType);
+    }
+
+    private String getCorrespondingLeftBracket(String rightBracket) {
+        switch (rightBracket) {
+            case "]": return "LBRACK";
+            case ")": return "LPAREN";
+            case "}": return "LBRACE";
+            default: return null;
+        }
+    }
+
+    private String getCorrespondingLeftBracketFromType(String rightBracketType) {
+        switch (rightBracketType) {
+            case "RBRACK": return "LBRACK";
+            case "RPAREN": return "LPAREN";
+            case "RBRACE": return "LBRACE";
+            default: return null;
+        }
+    }
+
+    // ==================== 保留的核心检测方法 ====================
+
+    private boolean isMissingSemicolonInStruct(Recognizer<?, ?> recognizer, Token token,
                                                IntervalSet expected, Vocabulary vocabulary, String msg) {
-        if (!msg.contains("no viable alternative")) {
-            return false;
-        }
+        if (!msg.contains("no viable alternative")) return false;
+        if (!expectsTypeSpecifier(expected, vocabulary)) return false;
 
-        // 检查期望的token是否包含声明关键字
-        boolean hasDeclKeywords = false;
-        for (int tokenType : expected.toArray()) {
-            String symbolName = vocabulary.getSymbolicName(tokenType);
-            if ("INT".equals(symbolName) || "CHAR".equals(symbolName) || "STRUCT".equals(symbolName)) {
-                hasDeclKeywords = true;
-                break;
-            }
-        }
+        Token prevToken = getPreviousNonHiddenToken(
+                (CommonTokenStream) ((SplcParser) recognizer).getInputStream(), token);
 
-        if (!hasDeclKeywords) {
-            return false;
-        }
-
-        // 检查前一个token是否是结构体成员声明的一部分
-        if (recognizer instanceof SplcParser &&
-                ((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream &&
-                offendingSymbol instanceof Token) {
-
-            CommonTokenStream tokenStream = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
-            Token offendingToken = (Token) offendingSymbol;
-
-            // 获取前一个非隐藏token
-            Token prevToken = getPreviousNonHiddenToken(tokenStream, offendingToken);
-            if (prevToken != null && "IDENTIFIER".equals(vocabulary.getSymbolicName(prevToken.getType()))) {
-                return true;
-            }
-        }
-
-        return false;
+        return prevToken != null && "IDENTIFIER".equals(vocabulary.getSymbolicName(prevToken.getType()));
     }
 
-    /**
-     * 专门检测缺少左圆括号的情况
-     */
-    private boolean isMissingLeftParenthesis(Recognizer<?, ?> recognizer, Object offendingSymbol,
-                                             IntervalSet expected, Vocabulary vocabulary, String msg) {
-        if (!(offendingSymbol instanceof Token)) return false;
+    private boolean isMissingFunctionCallParenthesis(Recognizer<?, ?> recognizer, Token token,
+                                                     IntervalSet expected, Vocabulary vocabulary, String msg) {
+        if (!expectsSemi(expected, vocabulary)) return false;
+        if (!"Number".equals(vocabulary.getSymbolicName(token.getType())) &&
+                !"Identifier".equals(vocabulary.getSymbolicName(token.getType()))) return false;
 
-        Token token = (Token) offendingSymbol;
-        String tokenType = vocabulary.getSymbolicName(token.getType());
+        Token prevToken = getPreviousNonHiddenToken(
+                (CommonTokenStream) ((SplcParser) recognizer).getInputStream(), token);
 
-        // 情况1：右括号后期望类型说明符
-        if ("RPAREN".equals(tokenType) && expectsTypeSpecifier(expected, vocabulary)) {
-            return isPrecededByIdentifier(recognizer, token, vocabulary);
-        }
-
-        // 情况2：类型说明符后期望类型说明符，且不在结构体定义中
-        if (isTypeSpecifier(tokenType) && expectsTypeSpecifier(expected, vocabulary)) {
-            return isPrecededByIdentifier(recognizer, token, vocabulary) &&
-                    !isInStructDefinitionContext(recognizer, token);
-        }
-
-        return false;
+        return prevToken != null && "Identifier".equals(vocabulary.getSymbolicName(prevToken.getType())) &&
+                isInExpressionContext(recognizer, token);
     }
 
-    /**
-     * 专门检测缺少左方括号的情况
-     */
-    private boolean isMissingLeftBracket(Recognizer<?, ?> recognizer, Object offendingSymbol,
-                                         IntervalSet expected, Vocabulary vocabulary, String msg) {
-        if (!(offendingSymbol instanceof Token)) return false;
-
-        Token token = (Token) offendingSymbol;
-        String tokenType = vocabulary.getSymbolicName(token.getType());
-
-        // 如果当前token是右方括号
-        if ("RBRACK".equals(tokenType)) {
-            // 情况1：局部变量声明 - 期望的token是赋值或分号
-            if (expectsAssignOrSemi(expected, vocabulary)) {
-                return isPrecededByIdentifier(recognizer, token, vocabulary);
-            }
-
-            // 情况2：全局变量声明 - 期望的token是类型说明符
-            if (expectsTypeSpecifier(expected, vocabulary)) {
-                return isPrecededByIdentifier(recognizer, token, vocabulary);
-            }
-
-            // 情况3：数组访问 - 期望的token是各种操作符或分号
-            if (expectsOperatorOrSemi(expected, vocabulary)) {
-                return isPrecededByIdentifier(recognizer, token, vocabulary);
-            }
-        }
-
-        // 新增情况4：多维数组声明 - 当前token是数字，期望赋值或分号，前一个token是右方括号
-        if ("Number".equals(tokenType) && expectsAssignOrSemi(expected, vocabulary)) {
-            return isPrecededByRightBracket(recognizer, token, vocabulary);
-        }
-
-        // 新增情况5：多维数组声明 - 当前token是标识符，期望赋值或分号，前一个token是右方括号
-        if ("Identifier".equals(tokenType) && expectsAssignOrSemi(expected, vocabulary)) {
-            return isPrecededByRightBracket(recognizer, token, vocabulary);
-        }
-
-        return false;
-    }
-
-    /**
-     * 检查是否前一个token是右方括号
-     */
-    private boolean isPrecededByRightBracket(Recognizer<?, ?> recognizer, Token token, Vocabulary vocabulary) {
+    private boolean isInExpressionContext(Recognizer<?, ?> recognizer, Token currentToken) {
+        // 简化的表达式上下文检查
         if (recognizer instanceof SplcParser &&
                 ((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream) {
 
             CommonTokenStream tokenStream = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
-            Token prevToken = getPreviousNonHiddenToken(tokenStream, token);
 
-            return prevToken != null && "RBRACK".equals(vocabulary.getSymbolicName(prevToken.getType()));
-        }
-        return false;
-    }
-
-    /**
-     * 检查是否期望操作符或分号
-     */
-    private boolean expectsOperatorOrSemi(IntervalSet expected, Vocabulary vocabulary) {
-        for (int expectedType : expected.toArray()) {
-            String expectedName = vocabulary.getSymbolicName(expectedType);
-            if (isOperator(expectedName) || "SEMI".equals(expectedName)) {
-                return true;
+            for (int i = currentToken.getTokenIndex() - 1; i >= 0; i--) {
+                Token t = tokenStream.get(i);
+                if (t.getChannel() == Token.DEFAULT_CHANNEL) {
+                    String tokenType = recognizer.getVocabulary().getSymbolicName(t.getType());
+                    if ("ASSIGN".equals(tokenType) || "COMMA".equals(tokenType) || "RETURN".equals(tokenType)) {
+                        return true;
+                    }
+                    if ("SEMI".equals(tokenType) || "RBRACE".equals(tokenType)) {
+                        return false;
+                    }
+                }
             }
         }
-        return false;
+        return true;
     }
 
-    /**
-     * 检查是否是操作符
-     */
-    private boolean isOperator(String tokenType) {
-        return "PLUS".equals(tokenType) || "MINUS".equals(tokenType) ||
-                "STAR".equals(tokenType) || "DIV".equals(tokenType) ||
-                "ASSIGN".equals(tokenType) || "LT".equals(tokenType) ||
-                "LE".equals(tokenType) || "GT".equals(tokenType) ||
-                "GE".equals(tokenType) || "EQ".equals(tokenType) ||
-                "NEQ".equals(tokenType) || "AND".equals(tokenType) ||
-                "OR".equals(tokenType) || "COMMA".equals(tokenType) ||
-                "RPAREN".equals(tokenType) || "RBRACK".equals(tokenType) ||
-                "RBRACE".equals(tokenType);
-    }
+    // ==================== 基础辅助方法 ====================
 
-    /**
-     * 专门检测缺少左大括号的情况
-     */
-    private boolean isMissingLeftBrace(Recognizer<?, ?> recognizer, Object offendingSymbol,
-                                       IntervalSet expected, Vocabulary vocabulary, String msg) {
-        if (!(offendingSymbol instanceof Token)) return false;
-
-        Token token = (Token) offendingSymbol;
-        String tokenType = vocabulary.getSymbolicName(token.getType());
-
-        if (isTypeSpecifier(tokenType) && expectsTypeSpecifier(expected, vocabulary)) {
-            return isInStructDefinitionContext(recognizer, token);
-        }
-
-        return false;
-    }
-
-    // ==================== 辅助检测方法 ====================
-
-    /**
-     * 检查是否期望类型说明符
-     */
     private boolean expectsTypeSpecifier(IntervalSet expected, Vocabulary vocabulary) {
         for (int expectedType : expected.toArray()) {
             String expectedName = vocabulary.getSymbolicName(expectedType);
-            if (isTypeSpecifier(expectedName)) {
-                return true;
-            }
+            if (isTypeSpecifier(expectedName)) return true;
         }
         return false;
     }
 
-    /**
-     * 检查是否期望赋值或分号
-     */
-    private boolean expectsAssignOrSemi(IntervalSet expected, Vocabulary vocabulary) {
+    private boolean expectsSemi(IntervalSet expected, Vocabulary vocabulary) {
         for (int expectedType : expected.toArray()) {
             String expectedName = vocabulary.getSymbolicName(expectedType);
-            if ("ASSIGN".equals(expectedName) || "SEMI".equals(expectedName)) {
-                return true;
-            }
+            if ("SEMI".equals(expectedName)) return true;
         }
         return false;
     }
 
-    /**
-     * 检查是否是类型说明符
-     */
     private boolean isTypeSpecifier(String tokenType) {
         return "INT".equals(tokenType) || "CHAR".equals(tokenType) || "STRUCT".equals(tokenType);
     }
 
-    /**
-     * 检查是否前一个token是标识符
-     */
     private boolean isPrecededByIdentifier(Recognizer<?, ?> recognizer, Token token, Vocabulary vocabulary) {
-        if (recognizer instanceof SplcParser &&
-                ((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream) {
+        Token prevToken = getPreviousNonHiddenToken(
+                (CommonTokenStream) ((SplcParser) recognizer).getInputStream(), token);
 
-            CommonTokenStream tokenStream = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
-            Token prevToken = getPreviousNonHiddenToken(tokenStream, token);
-
-            return prevToken != null && "Identifier".equals(vocabulary.getSymbolicName(prevToken.getType()));
-        }
-        return false;
+        return prevToken != null && "Identifier".equals(vocabulary.getSymbolicName(prevToken.getType()));
     }
 
-    /**
-     * 获取前一个非隐藏token
-     */
     private Token getPreviousNonHiddenToken(CommonTokenStream tokenStream, Token currentToken) {
         for (int i = currentToken.getTokenIndex() - 1; i >= 0; i--) {
             Token token = tokenStream.get(i);
@@ -414,34 +356,6 @@ public class Project2ErrorListener extends BaseErrorListener {
             }
         }
         return null;
-    }
-
-    /**
-     * 检查是否在结构体定义上下文中
-     */
-    private boolean isInStructDefinitionContext(Recognizer<?, ?> recognizer, Token currentToken) {
-        if (recognizer instanceof SplcParser &&
-                ((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream) {
-
-            CommonTokenStream tokenStream = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
-            Token prevToken = getPreviousNonHiddenToken(tokenStream, currentToken);
-
-            if (prevToken != null) {
-                String prevTokenType = recognizer.getVocabulary().getSymbolicName(prevToken.getType());
-
-                // 如果前一个token是STRUCT，则是在结构体定义中
-                if ("STRUCT".equals(prevTokenType)) {
-                    return true;
-                }
-
-                // 如果前一个token是标识符，检查再前一个token是否是STRUCT
-                if ("Identifier".equals(prevTokenType)) {
-                    Token prevPrevToken = getPreviousNonHiddenToken(tokenStream, prevToken);
-                    return prevPrevToken != null && "STRUCT".equals(recognizer.getVocabulary().getSymbolicName(prevPrevToken.getType()));
-                }
-            }
-        }
-        return false;
     }
 
     // ==================== EOF错误处理 ====================
@@ -454,25 +368,77 @@ public class Project2ErrorListener extends BaseErrorListener {
             Token lastToken = findLastNonHiddenToken(tokenStream);
 
             if (lastToken != null) {
-                String lastTokenName = recognizer.getVocabulary().getSymbolicName(lastToken.getType());
-                String missingSymbol = inferMissingSymbolFromContext(lastTokenName, lastToken.getText());
+                String missingSymbol = inferMissingSymbolFromEOF(tokenStream, lastToken, recognizer.getVocabulary());
                 int reportLine = Math.max(0, lastToken.getLine() - 1);
 
-                if (missingSymbol != null) {
-                    MissingSymbolError error = new MissingSymbolError(missingSymbol, reportLine);
-                    this.grader.getWriter().println(error);
-                } else {
-                    MissingSymbolError error = new MissingSymbolError("RBRACE", reportLine);
-                    this.grader.getWriter().println(error);
-                }
+                MissingSymbolError error = new MissingSymbolError(
+                        missingSymbol != null ? missingSymbol : "RBRACE", reportLine);
+                this.grader.getWriter().println(error);
             }
         }
         throw new ParseCancellationException();
     }
 
-    /**
-     * 查找最后一个非隐藏token
-     */
+    private String inferMissingSymbolFromEOF(CommonTokenStream tokenStream, Token lastToken, Vocabulary vocabulary) {
+        String lastTokenType = vocabulary.getSymbolicName(lastToken.getType());
+
+        // 情况1：最后一个token是右大括号，检查是否是结构体定义
+        if ("RBRACE".equals(lastTokenType)) {
+            if (isStructDefinitionEnd(tokenStream, lastToken, vocabulary)) {
+                return "SEMI"; // 结构体定义缺少分号
+            }
+            return "RBRACE"; // 其他情况缺少右大括号
+        }
+
+        // 情况2：最后一个token是标识符，检查是否是结构体声明
+        if ("Identifier".equals(lastTokenType)) {
+            Token prevToken = getPreviousNonHiddenToken(tokenStream, lastToken);
+            if (prevToken != null && "STRUCT".equals(vocabulary.getSymbolicName(prevToken.getType()))) {
+                return "SEMI"; // 结构体声明缺少分号
+            }
+        }
+
+        // 情况3：使用原来的推断逻辑
+        return inferMissingSymbolFromContext(lastTokenType, lastToken.getText());
+    }
+
+    private boolean isStructDefinitionEnd(CommonTokenStream tokenStream, Token rbraceToken, Vocabulary vocabulary) {
+        // 向前查找匹配的左大括号
+        int braceCount = 1;
+        for (int i = rbraceToken.getTokenIndex() - 1; i >= 0; i--) {
+            Token token = tokenStream.get(i);
+            if (token.getChannel() == Token.DEFAULT_CHANNEL) {
+                String tokenType = vocabulary.getSymbolicName(token.getType());
+
+                if ("RBRACE".equals(tokenType)) {
+                    braceCount++;
+                } else if ("LBRACE".equals(tokenType)) {
+                    braceCount--;
+                    if (braceCount == 0) {
+                        // 找到了匹配的左大括号，检查前面是否有STRUCT
+                        for (int j = i - 1; j >= 0; j--) {
+                            Token prevToken = tokenStream.get(j);
+                            if (prevToken.getChannel() == Token.DEFAULT_CHANNEL) {
+                                String prevTokenType = vocabulary.getSymbolicName(prevToken.getType());
+                                if ("STRUCT".equals(prevTokenType)) {
+                                    return true; // 是结构体定义
+                                } else if ("Identifier".equals(prevTokenType) || "INT".equals(prevTokenType) ||
+                                        "CHAR".equals(prevTokenType) || "RBRACE".equals(prevTokenType)) {
+                                    // 继续向前查找
+                                    continue;
+                                } else {
+                                    break; // 不是结构体定义
+                                }
+                            }
+                        }
+                        return false;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     private Token findLastNonHiddenToken(CommonTokenStream tokenStream) {
         List<Token> tokens = tokenStream.getTokens();
         for (int i = tokens.size() - 1; i >= 0; i--) {
@@ -485,87 +451,9 @@ public class Project2ErrorListener extends BaseErrorListener {
     }
 
     private String inferMissingSymbolFromContext(String lastTokenType, String lastTokenText) {
-        if ("LBRACE".equals(lastTokenType)) {
-            return "RBRACE";
-        } else if ("LPAREN".equals(lastTokenType)) {
-            return "RPAREN";
-        } else if ("main".equals(lastTokenText) || "IDENTIFIER".equals(lastTokenType)) {
-            return "LPAREN";
-        }
+        if ("LBRACE".equals(lastTokenType)) return "RBRACE";
+        if ("LPAREN".equals(lastTokenType)) return "RPAREN";
+        if ("main".equals(lastTokenText) || "IDENTIFIER".equals(lastTokenType)) return "LPAREN";
         return null;
-    }
-
-    /**
-     * 专门检测函数调用缺少左括号的情况
-     */
-    private boolean isMissingFunctionCallParenthesis(Recognizer<?, ?> recognizer, Object offendingSymbol,
-                                                     IntervalSet expected, Vocabulary vocabulary, String msg) {
-        if (!(offendingSymbol instanceof Token)) return false;
-
-        Token token = (Token) offendingSymbol;
-        String tokenType = vocabulary.getSymbolicName(token.getType());
-
-        // 检查是否期望分号，但当前token是数字或标识符（函数参数）
-        boolean expectsSemi = false;
-        for (int expectedType : expected.toArray()) {
-            String expectedName = vocabulary.getSymbolicName(expectedType);
-            if ("SEMI".equals(expectedName)) {
-                expectsSemi = true;
-                break;
-            }
-        }
-
-        if (expectsSemi && ("Number".equals(tokenType) || "Identifier".equals(tokenType))) {
-            // 检查前一个token是否是标识符（函数名）
-            if (recognizer instanceof SplcParser &&
-                    ((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream) {
-
-                CommonTokenStream tokenStream = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
-                Token prevToken = getPreviousNonHiddenToken(tokenStream, token);
-
-                if (prevToken != null && "Identifier".equals(vocabulary.getSymbolicName(prevToken.getType()))) {
-                    // 检查是否在赋值表达式或表达式语句中
-                    return isInExpressionContext(recognizer, token);
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * 检查是否在表达式上下文中
-     */
-    private boolean isInExpressionContext(Recognizer<?, ?> recognizer, Token currentToken) {
-        if (recognizer instanceof SplcParser &&
-                ((SplcParser) recognizer).getInputStream() instanceof CommonTokenStream) {
-
-            CommonTokenStream tokenStream = (CommonTokenStream) ((SplcParser) recognizer).getInputStream();
-
-            // 检查前面是否有赋值操作符或其他表达式上下文指示符
-            for (int i = currentToken.getTokenIndex() - 1; i >= 0; i--) {
-                Token t = tokenStream.get(i);
-                if (t.getChannel() == Token.DEFAULT_CHANNEL) {
-                    String tokenType = recognizer.getVocabulary().getSymbolicName(t.getType());
-
-                    // 如果遇到赋值操作符、逗号、左括号等，说明在表达式上下文中
-                    if ("ASSIGN".equals(tokenType) || "COMMA".equals(tokenType) ||
-                            "LPAREN".equals(tokenType) || "LBRACK".equals(tokenType) ||
-                            "PLUS".equals(tokenType) || "MINUS".equals(tokenType) ||
-                            "STAR".equals(tokenType) || "DIV".equals(tokenType) ||
-                            "RETURN".equals(tokenType)) {
-                        return true;
-                    }
-
-                    // 如果遇到分号、右大括号等，说明不在表达式上下文中
-                    if ("SEMI".equals(tokenType) || "RBRACE".equals(tokenType)) {
-                        return false;
-                    }
-                }
-            }
-        }
-
-        // 默认情况下，假设在表达式上下文中
-        return true;
     }
 }
