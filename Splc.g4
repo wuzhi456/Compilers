@@ -127,7 +127,7 @@ LBRACK   : '[';
 RBRACK   : ']';
 
 // ---------- Identifiers & Literals ----------
-Identifier  : [_a-zA-Z]([a-zA-Z0-9])*;
+Identifier  : [_a-zA-Z]([a-zA-Z0-9_])*;
 Number      : '0'|[1-9][0-9]*;
 Char        : '\''(~['\\\n\r]|'\\'[nt'\\0])'\'';
 
