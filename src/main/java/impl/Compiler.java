@@ -7,9 +7,6 @@ import framework.project3.Project3SemanticError;
 import generated.Splc.SplcBaseVisitor;
 import generated.Splc.SplcLexer;
 import generated.Splc.SplcParser;
-import impl.symbol.Symbol;
-import impl.symbol.SymbolTable;
-import impl.types.*;
 import org.antlr.v4.runtime.CharStream;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
@@ -48,6 +45,374 @@ public class Compiler extends AbstractCompiler {
             grader.print(symbol.getName() + ": " + symbol.getType().prettyPrint() + "\n");
         }
     }
+
+    // ===== Type System Inner Classes =====
+
+    private static class BasicType implements Type {
+        public enum Kind {
+            INT, CHAR
+        }
+
+        private final Kind kind;
+
+        public BasicType(Kind kind) {
+            this.kind = kind;
+        }
+
+        public Kind getKind() {
+            return kind;
+        }
+
+        @Override
+        public String prettyPrint() {
+            return kind == Kind.INT ? "int" : "char";
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj) return true;
+            if (!(obj instanceof BasicType)) return false;
+            BasicType other = (BasicType) obj;
+            return kind == other.kind;
+        }
+
+        @Override
+        public int hashCode() {
+            return kind.hashCode();
+        }
+    }
+
+    private static class ArrayType implements Type {
+        private final Type elementType;
+        private final int length;
+
+        public ArrayType(Type elementType, int length) {
+            this.elementType = elementType;
+            this.length = length;
+        }
+
+        public Type getElementType() {
+            return elementType;
+        }
+
+        public int getLength() {
+            return length;
+        }
+
+        @Override
+        public String prettyPrint() {
+            return elementType.prettyPrint() + "[" + length + "]";
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj) return true;
+            if (!(obj instanceof ArrayType)) return false;
+            ArrayType other = (ArrayType) obj;
+            return length == other.length && elementType.equals(other.elementType);
+        }
+
+        @Override
+        public int hashCode() {
+            return elementType.hashCode() * 31 + length;
+        }
+    }
+
+    private static class PointerType implements Type {
+        private final Type referencedType;
+
+        public PointerType(Type referencedType) {
+            this.referencedType = referencedType;
+        }
+
+        public Type getReferencedType() {
+            return referencedType;
+        }
+
+        @Override
+        public String prettyPrint() {
+            return referencedType.prettyPrint() + "*";
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj) return true;
+            if (!(obj instanceof PointerType)) return false;
+            PointerType other = (PointerType) obj;
+            return referencedType.equals(other.referencedType);
+        }
+
+        @Override
+        public int hashCode() {
+            return referencedType.hashCode() * 17;
+        }
+    }
+
+    private static class FunctionType implements Type {
+        private final Type returnType;
+        private final List<Type> parameterTypes;
+
+        public FunctionType(Type returnType, List<Type> parameterTypes) {
+            this.returnType = returnType;
+            this.parameterTypes = new ArrayList<>(parameterTypes);
+        }
+
+        public Type getReturnType() {
+            return returnType;
+        }
+
+        public List<Type> getParameterTypes() {
+            return parameterTypes;
+        }
+
+        @Override
+        public String prettyPrint() {
+            StringBuilder sb = new StringBuilder();
+            sb.append(returnType.prettyPrint()).append("(");
+            for (int i = 0; i < parameterTypes.size(); i++) {
+                if (i > 0) sb.append(",");
+                sb.append(parameterTypes.get(i).prettyPrint());
+            }
+            sb.append(")");
+            return sb.toString();
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj) return true;
+            if (!(obj instanceof FunctionType)) return false;
+            FunctionType other = (FunctionType) obj;
+            return returnType.equals(other.returnType) && 
+                   parameterTypes.equals(other.parameterTypes);
+        }
+
+        @Override
+        public int hashCode() {
+            return returnType.hashCode() * 31 + parameterTypes.hashCode();
+        }
+    }
+
+    private static class StructType implements Type {
+        private final String tag;
+        private final List<Member> members;
+        private final boolean isComplete;
+
+        public static class Member {
+            public final Type type;
+            public final String name;
+
+            public Member(Type type, String name) {
+                this.type = type;
+                this.name = name;
+            }
+        }
+
+        // Constructor for incomplete struct
+        public StructType(String tag) {
+            this.tag = tag;
+            this.members = null;
+            this.isComplete = false;
+        }
+
+        // Constructor for complete struct
+        public StructType(String tag, List<Member> members) {
+            this.tag = tag;
+            this.members = new ArrayList<>(members);
+            this.isComplete = true;
+        }
+
+        public String getTag() {
+            return tag;
+        }
+
+        public List<Member> getMembers() {
+            return members;
+        }
+
+        public boolean isComplete() {
+            return isComplete;
+        }
+
+        @Override
+        public String prettyPrint() {
+            return "struct " + tag;
+        }
+
+        @Override
+        public String fullPrint() {
+            if (!isComplete || members == null) {
+                return prettyPrint();
+            }
+            StringBuilder sb = new StringBuilder("struct ");
+            sb.append(tag).append("{");
+            for (Member member : members) {
+                sb.append(member.type.prettyPrint()).append(" ").append(member.name).append(";");
+            }
+            sb.append("}");
+            return sb.toString();
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj) return true;
+            if (!(obj instanceof StructType)) return false;
+            StructType other = (StructType) obj;
+            // Two struct types are the same if they have the same tag
+            // and same completeness (in same scope context, but we check that elsewhere)
+            return tag.equals(other.tag);
+        }
+
+        @Override
+        public int hashCode() {
+            return tag.hashCode();
+        }
+    }
+
+    // ===== Symbol Table Inner Classes =====
+
+    private static class Symbol {
+        public enum Kind {
+            VARIABLE,    // Variables and function names (in "other" namespace)
+            FUNCTION,    // Actually same as variable, but we track separately
+            FUNCTION_DECL, // Function declaration (no body)
+            STRUCT_TAG,  // Structure tags
+            STRUCT_MEMBER // Structure members (each struct has its own namespace)
+        }
+
+        private final String name;
+        private final Type type;
+        private final Kind kind;
+        private final int scopeId;  // For tracking which scope this belongs to
+
+        public Symbol(String name, Type type, Kind kind, int scopeId) {
+            this.name = name;
+            this.type = type;
+            this.kind = kind;
+            this.scopeId = scopeId;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public Type getType() {
+            return type;
+        }
+
+        public Kind getKind() {
+            return kind;
+        }
+
+        public int getScopeId() {
+            return scopeId;
+        }
+    }
+
+    private static class SymbolTable {
+        // Scopes for different namespaces
+        private final Deque<Map<String, Symbol>> otherScopes = new ArrayDeque<>();  // variables, functions
+        private final Deque<Map<String, Symbol>> tagScopes = new ArrayDeque<>();    // struct tags
+        
+        private int scopeIdCounter = 0;
+        private int currentScopeId = 0;
+
+        public SymbolTable() {
+            // Start with file scope
+            enterScope();
+        }
+
+        public void enterScope() {
+            otherScopes.push(new LinkedHashMap<>());
+            tagScopes.push(new LinkedHashMap<>());
+            currentScopeId = scopeIdCounter++;
+        }
+
+        public void exitScope() {
+            if (otherScopes.size() > 1) {
+                otherScopes.pop();
+                tagScopes.pop();
+            }
+        }
+
+        public int getCurrentScopeId() {
+            return currentScopeId;
+        }
+
+        // Add symbol to "other" namespace (variables, functions)
+        public boolean addOther(String name, Type type, Symbol.Kind kind) {
+            Map<String, Symbol> currentScope = otherScopes.peek();
+            if (currentScope.containsKey(name)) {
+                return false; // Already exists in current scope
+            }
+            currentScope.put(name, new Symbol(name, type, kind, currentScopeId));
+            return true;
+        }
+
+        // Update existing symbol in current scope (for converting function decl to definition)
+        public void updateOther(String name, Type type, Symbol.Kind kind) {
+            Map<String, Symbol> currentScope = otherScopes.peek();
+            currentScope.put(name, new Symbol(name, type, kind, currentScopeId));
+        }
+
+        // Add symbol to "tag" namespace (struct tags)
+        public boolean addTag(String name, Type type) {
+            Map<String, Symbol> currentScope = tagScopes.peek();
+            if (currentScope.containsKey(name)) {
+                return false; // Already exists in current scope
+            }
+            currentScope.put(name, new Symbol(name, type, Symbol.Kind.STRUCT_TAG, currentScopeId));
+            return true;
+        }
+
+        // Update existing tag in current scope (for completing incomplete structs)
+        public void updateTag(String name, Type type) {
+            Map<String, Symbol> currentScope = tagScopes.peek();
+            currentScope.put(name, new Symbol(name, type, Symbol.Kind.STRUCT_TAG, currentScopeId));
+        }
+
+        // Lookup in "other" namespace
+        public Symbol lookupOther(String name) {
+            for (Map<String, Symbol> scope : otherScopes) {
+                if (scope.containsKey(name)) {
+                    return scope.get(name);
+                }
+            }
+            return null;
+        }
+
+        // Lookup in "tag" namespace
+        public Symbol lookupTag(String name) {
+            for (Map<String, Symbol> scope : tagScopes) {
+                if (scope.containsKey(name)) {
+                    return scope.get(name);
+                }
+            }
+            return null;
+        }
+
+        // Check if symbol exists in current scope only (for redefinition check)
+        public boolean existsInCurrentScopeOther(String name) {
+            return otherScopes.peek().containsKey(name);
+        }
+
+        public boolean existsInCurrentScopeTag(String name) {
+            return tagScopes.peek().containsKey(name);
+        }
+
+        // Get all symbols in file scope (for printing at the end)
+        public List<Symbol> getFileScopeOthers() {
+            if (otherScopes.isEmpty()) return Collections.emptyList();
+            
+            // File scope is at the bottom of the stack
+            Map<String, Symbol> fileScope = null;
+            for (Map<String, Symbol> scope : otherScopes) {
+                fileScope = scope;
+            }
+            return fileScope != null ? new ArrayList<>(fileScope.values()) : Collections.emptyList();
+        }
+    }
+
+    // ===== Semantic Analyzer =====
 
     private static class SemanticAnalyzer extends SplcBaseVisitor<Type> {
         private final AbstractGrader grader;
