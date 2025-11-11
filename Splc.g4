@@ -17,6 +17,7 @@ program: globalDef* EOF;
 globalDef
     : specifier Identifier LPAREN funcArgs RPAREN LBRACE statement* RBRACE   // function definition
     | specifier varDec (ASSIGN expression)? SEMI                             // global variable definition
+    | specifier Identifier LPAREN funcArgs RPAREN SEMI
     | specifier SEMI                                                         // global struct declaration
     ;
 
@@ -54,7 +55,7 @@ expression
     | Char
     | LPAREN expression RPAREN
 
-    // Suffix Unary Operators (postfix) — 高优先级，左结合
+    // Suffix Unary Operators (postfix)
     | expression INC
     | expression DEC
     | expression LBRACK expression RBRACK
