@@ -7,10 +7,11 @@ import java.io.InputStream;
 
 public class Main {
     public static void main(String[] args) throws IOException {
-        {
-            InputStream input = new FileInputStream("testcases/project3/ok_01.splc");
-            AbstractGrader grader = new Grader(input, System.out);
-            grader.run();
+        InputStream input = System.in;
+        if (args.length > 0) {
+            input = new FileInputStream(args[0]);
         }
+        AbstractGrader grader = new Grader(input, System.out);
+        grader.run();
     }
 }

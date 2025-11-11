@@ -16,6 +16,7 @@ program: globalDef* EOF;
 
 globalDef
     : specifier Identifier LPAREN funcArgs RPAREN LBRACE statement* RBRACE   // function definition
+    | specifier Identifier LPAREN funcArgs RPAREN SEMI                       // function declaration
     | specifier varDec (ASSIGN expression)? SEMI                             // global variable definition
     | specifier SEMI                                                         // global struct declaration
     ;
