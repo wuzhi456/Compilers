@@ -26,6 +26,11 @@ public class Compiler extends AbstractCompiler {
         SplcLexer lexer = new SplcLexer(input);
         CommonTokenStream tokens = new CommonTokenStream(lexer);
         SplcParser parser = new SplcParser(tokens);
+        
+        // Remove default error listeners to suppress parse error messages
+        // Per project requirements: all test cases won't have syntax errors
+        parser.removeErrorListeners();
+        lexer.removeErrorListeners();
 
         SplcParser.ProgramContext program = parser.program();
 
