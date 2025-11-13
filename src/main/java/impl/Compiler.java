@@ -603,8 +603,16 @@ public class Compiler extends AbstractCompiler {
 
                 // Check for incomplete type
                 if (!isCompleteType(varType)) {
-                    incompleteGlobals.put(new Symbol(varName, varType, Symbol.Kind.VARIABLE, 0), getIdentifierNode(ctx.varDec()));
-
+                    // For arrays, the element type must be complete immediately
+                    // For direct struct types, we can defer the check per v4 spec
+                    if (requiresImmediateCompletenessCheck(varType)) {
+                        if (!isCompleteType(varType)) {
+                            grader.reportSemanticError(Project3SemanticError.definitionIncomplete(getIdentifierNode(ctx.varDec())));
+                        }
+                    } else if (!isCompleteType(varType)) {
+                        // Defer check for direct struct types
+                        incompleteGlobals.put(new Symbol(varName, varType, Symbol.Kind.VARIABLE, 0), getIdentifierNode(ctx.varDec()));
+                    }
                 }
 
                 // Check redefinition
@@ -860,6 +868,18 @@ public class Compiler extends AbstractCompiler {
             } else if (type instanceof FunctionType) {
                 return true;
             }
+            return false;
+        }
+
+        private boolean requiresImmediateCompletenessCheck(Type type) {
+            if (type instanceof ArrayType) {
+                // Arrays always require immediate check of element type
+                return true;
+            } else if (type instanceof PointerType) {
+                // Pointers don't require immediate check
+                return false;
+            }
+            // Direct struct types can be deferred for global variables
             return false;
         }
     }
