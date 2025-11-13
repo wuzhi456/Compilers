@@ -27,6 +27,9 @@ public class Compiler extends AbstractCompiler {
         CommonTokenStream tokens = new CommonTokenStream(lexer);
         SplcParser parser = new SplcParser(tokens);
 
+        parser.removeErrorListeners();
+        lexer.removeErrorListeners();
+
         SplcParser.ProgramContext program = parser.program();
 
         // Phase 1: Semantic analysis and error checking
@@ -197,6 +200,8 @@ public class Compiler extends AbstractCompiler {
         private final List<Member> members;
         private final boolean isComplete;
 
+        private boolean isInDef;
+
         public static class Member {
             public final Type type;
             public final String name;
@@ -208,10 +213,11 @@ public class Compiler extends AbstractCompiler {
         }
 
         // Constructor for incomplete struct
-        public StructType(String tag) {
+        public StructType(String tag, boolean isInDef) {
             this.tag = tag;
             this.members = null;
             this.isComplete = false;
+            this.isInDef = isInDef;
         }
 
         // Constructor for complete struct
@@ -219,6 +225,7 @@ public class Compiler extends AbstractCompiler {
             this.tag = tag;
             this.members = new ArrayList<>(members);
             this.isComplete = true;
+            this.isInDef = false;
         }
 
         public String getTag() {
@@ -231,6 +238,10 @@ public class Compiler extends AbstractCompiler {
 
         public boolean isComplete() {
             return isComplete;
+        }
+
+        public boolean isInDef(){
+            return isInDef;
         }
 
         @Override
@@ -388,6 +399,22 @@ public class Compiler extends AbstractCompiler {
                 }
             }
             return null;
+
+        }
+
+        public Symbol lookupForDef(String name) {
+            for (Map<String, Symbol> scope : tagScopes) {
+                if (scope.containsKey(name)) {
+                    Symbol sym = scope.get(name);
+                    if (sym.getType() instanceof StructType) {
+                        StructType st = (StructType)sym.getType();
+                        if (st.isInDef() || st.isComplete()) {
+                            return sym;
+                        }
+                    }
+                }
+            }
+            return null;
         }
 
         // Check if symbol exists in current scope only (for redefinition check)
@@ -420,6 +447,9 @@ public class Compiler extends AbstractCompiler {
         private final List<Symbol> globalVariables = new ArrayList<>();
         private final List<Symbol> globalFunctions = new ArrayList<>();
 
+        private final Map<Symbol, TerminalNode> incompleteGlobals = new LinkedHashMap<>();
+
+
         public SemanticAnalyzer(AbstractGrader grader) {
             this.grader = grader;
             this.symbolTable = new SymbolTable();
@@ -433,11 +463,46 @@ public class Compiler extends AbstractCompiler {
             return globalFunctions;
         }
 
+        private List<String> getTagNamesFromType(Type type) {
+            List<String> result = new ArrayList<>();
+            if (type instanceof StructType) {
+                result.add(((StructType) type).getTag());
+            } else if (type instanceof PointerType) {
+                result.addAll(getTagNamesFromType(((PointerType) type).getReferencedType()));
+            } else if (type instanceof ArrayType) {
+                result.addAll(getTagNamesFromType(((ArrayType) type).getElementType()));
+            }
+            return result;
+        }
+
         @Override
         public Type visitProgram(SplcParser.ProgramContext ctx) {
             for (SplcParser.GlobalDefContext globalDef : ctx.globalDef()) {
                 visitGlobalDef(globalDef);
             }
+            for (Symbol s : incompleteGlobals.keySet()) {
+                Type type = s.getType();
+                List<String> tags = getTagNamesFromType(type);
+                boolean allStructComplete = true;
+                for (String tagName : tags) {
+                    Symbol tagSym = symbolTable.lookupTag(tagName);
+                    Type tagType = (tagSym != null) ? tagSym.getType() : null;
+                    if (tagType instanceof StructType) {
+                        if (!((StructType) tagType).isComplete()) {
+                            allStructComplete = false;
+                            break;
+                        }
+                    } else {
+                        allStructComplete = false;
+                        break;
+                    }
+                }
+                if (!allStructComplete) {
+                    grader.reportSemanticError(Project3SemanticError.definitionIncomplete(incompleteGlobals.get(s)));
+                }
+            }
+
+
             return null;
         }
 
@@ -460,18 +525,27 @@ public class Compiler extends AbstractCompiler {
                 FunctionType funcType = new FunctionType(specType, paramTypes);
 
                 // Check if function already exists in current scope
-                Symbol existing = symbolTable.lookupOther(funcName.getText());
-                if (existing != null && existing.getScopeId() == symbolTable.getCurrentScopeId()) {
-                    // If it's already a definition (FUNCTION), that's a redefinition error
-                    if (existing.getKind() == Symbol.Kind.FUNCTION) {
+//                Symbol existing = symbolTable.lookupOther(funcName.getText());
+//                if (existing != null && existing.getScopeId() == symbolTable.getCurrentScopeId()) {
+//                    // If it's already a definition (FUNCTION), that's a redefinition error
+//                    if (existing.getKind() == Symbol.Kind.FUNCTION) {
+//                        grader.reportSemanticError(Project3SemanticError.redefinition(funcName));
+//                    }
+//                    // If it's a declaration (FUNCTION_DECL), we can define it - update it
+//                    symbolTable.updateOther(funcName.getText(), funcType, Symbol.Kind.FUNCTION);
+//                } else {
+//                    // No existing symbol, add it
+//                    symbolTable.addOther(funcName.getText(), funcType, Symbol.Kind.FUNCTION);
+//                }
+                // 查找file scope所有符号
+                for (Symbol s : symbolTable.getFileScopeOthers()) {
+                    if (s.getName().equals(funcName.getText()) && s.getKind() == Symbol.Kind.FUNCTION) {
+                        // 已经有同名函数定义，不管scopeId
                         grader.reportSemanticError(Project3SemanticError.redefinition(funcName));
+                        break;
                     }
-                    // If it's a declaration (FUNCTION_DECL), we can define it - update it
-                    symbolTable.updateOther(funcName.getText(), funcType, Symbol.Kind.FUNCTION);
-                } else {
-                    // No existing symbol, add it
-                    symbolTable.addOther(funcName.getText(), funcType, Symbol.Kind.FUNCTION);
                 }
+                symbolTable.addOther(funcName.getText(), funcType, Symbol.Kind.FUNCTION);
 
                 // Track in global functions list (but check if already there from declaration)
                 boolean alreadyInList = false;
@@ -500,8 +574,12 @@ public class Compiler extends AbstractCompiler {
                             grader.reportSemanticError(Project3SemanticError.definitionIncomplete(
                                     getIdentifierNode(ctx.funcArgs().varDec(i))));
                         }
+                        // check for duplicate param
+                        if (!symbolTable.addOther(paramName, paramType, Symbol.Kind.VARIABLE)) {
+                            grader.reportSemanticError(Project3SemanticError.redefinition(getIdentifierNode(ctx.funcArgs().varDec(i))));
+                        }
 
-                        symbolTable.addOther(paramName, paramType, Symbol.Kind.VARIABLE);
+                        // else symbolTable.addOther(paramName, paramType, Symbol.Kind.VARIABLE);
                     }
                 }
 
@@ -517,19 +595,30 @@ public class Compiler extends AbstractCompiler {
                 String varName = extractIdentifierFromVarDec(ctx.varDec());
                 Type varType = buildTypeFromVarDec(ctx.varDec(), specType);
 
+                if (!symbolTable.addOther(varName, varType, Symbol.Kind.VARIABLE)) {
+                    grader.reportSemanticError(Project3SemanticError.redefinition(getIdentifierNode(ctx.varDec())));
+                }
+                globalVariables.add(new Symbol(varName, varType, Symbol.Kind.VARIABLE, 0));
+
+
                 // Check for incomplete type
                 if (!isCompleteType(varType)) {
-                    grader.reportSemanticError(Project3SemanticError.definitionIncomplete(
-                            getIdentifierNode(ctx.varDec())));
+                    incompleteGlobals.put(new Symbol(varName, varType, Symbol.Kind.VARIABLE, 0), getIdentifierNode(ctx.varDec()));
+
                 }
 
                 // Check redefinition
-                if (symbolTable.existsInCurrentScopeOther(varName)) {
-                    grader.reportSemanticError(Project3SemanticError.redefinition(getIdentifierNode(ctx.varDec())));
-                }
+//                if (symbolTable.existsInCurrentScopeOther(varName)) {
+//                    grader.reportSemanticError(Project3SemanticError.redefinition(getIdentifierNode(ctx.varDec())));
+//                }
+                // 查 file scope，变量/函数/声明同名都不行
+//                for (Symbol s : symbolTable.getFileScopeOthers()) {
+//                    if (s.getName().equals(varName)) {
+//                        grader.reportSemanticError(Project3SemanticError.redefinition(getIdentifierNode(ctx.varDec())));
+//                        break;
+//                    }
+//                }
 
-                symbolTable.addOther(varName, varType, Symbol.Kind.VARIABLE);
-                globalVariables.add(new Symbol(varName, varType, Symbol.Kind.VARIABLE, 0));
 
             } else if (ctx.Identifier() != null && ctx.funcArgs() != null) {
                 // Function declaration: specifier Identifier LPAREN funcArgs RPAREN SEMI
@@ -546,11 +635,23 @@ public class Compiler extends AbstractCompiler {
                 FunctionType funcType = new FunctionType(specType, paramTypes);
 
                 // Check redeclaration - can't declare a function if already declared/defined
-                Symbol existing = symbolTable.lookupOther(funcName.getText());
-                if (existing != null && existing.getScopeId() == symbolTable.getCurrentScopeId()) {
-                    grader.reportSemanticError(Project3SemanticError.redeclaration(funcName));
+                // 查 file scope，是否已经有同名函数
+//                for (Symbol s : symbolTable.getFileScopeOthers()) {
+//                    if (s.getName().equals(funcName.getText()) &&
+//                            (s.getKind() == Symbol.Kind.FUNCTION || s.getKind() == Symbol.Kind.FUNCTION_DECL)) {
+//                        grader.reportSemanticError(Project3SemanticError.redeclaration(funcName));
+//                        break;
+//                    }
+//                }
+                for (Symbol s : symbolTable.getFileScopeOthers()) {
+                    // 只要同名，不管 Kind
+                    if (s.getName().equals(funcName.getText())) {
+                        grader.reportSemanticError(Project3SemanticError.redeclaration(funcName));
+                        break;
+                    }
                 }
 
+                // 允许第一个声明
                 symbolTable.addOther(funcName.getText(), funcType, Symbol.Kind.FUNCTION_DECL);
                 globalFunctions.add(new Symbol(funcName.getText(), funcType, Symbol.Kind.FUNCTION_DECL, 0));
             }
@@ -569,61 +670,45 @@ public class Compiler extends AbstractCompiler {
                 String tagName = ctx.Identifier().getText();
 
                 if (ctx.LBRACE() != null) {
-                    // Complete struct: struct Identifier { ... }
+                    // 完整 struct 定义
+                    Symbol existingTag = symbolTable.lookupForDef(tagName);
+                    if (existingTag != null) {
+                        grader.reportSemanticError(Project3SemanticError.redeclaration(ctx.Identifier()));
+                    }
+                    // 占位符注册并标记“定义中”
+                    symbolTable.enterScope();
+                    StructType incompleteStruct = new StructType(tagName, true);
+                    symbolTable.addTag(tagName, incompleteStruct);
 
-                    // Parse members first
                     List<StructType.Member> members = new ArrayList<>();
                     Set<String> memberNames = new HashSet<>();
-
                     for (int i = 0; i < ctx.specifier().size(); i++) {
                         Type memberSpecType = visitSpecifier(ctx.specifier(i));
                         String memberName = extractIdentifierFromVarDec(ctx.varDec(i));
                         Type memberType = buildTypeFromVarDec(ctx.varDec(i), memberSpecType);
 
-                        // Check for incomplete member type
                         if (!isCompleteType(memberType)) {
-                            grader.reportSemanticError(Project3SemanticError.memberIncomplete(
-                                    getIdentifierNode(ctx.varDec(i))));
+                            grader.reportSemanticError(Project3SemanticError.memberIncomplete(getIdentifierNode(ctx.varDec(i))));
                         }
-
-                        // Check for duplicate member names
                         if (memberNames.contains(memberName)) {
-                            grader.reportSemanticError(Project3SemanticError.memberDuplicate(
-                                    getIdentifierNode(ctx.varDec(i))));
+                            grader.reportSemanticError(Project3SemanticError.memberDuplicate(getIdentifierNode(ctx.varDec(i))));
                         }
                         memberNames.add(memberName);
-
                         members.add(new StructType.Member(memberType, memberName));
                     }
-
-                    // Now check if this tag was already declared as complete in this scope
-                    Symbol existingTag = symbolTable.lookupTag(tagName);
-                    if (existingTag != null && existingTag.getScopeId() == symbolTable.getCurrentScopeId()) {
-                        StructType existingStructType = (StructType) existingTag.getType();
-                        if (existingStructType.isComplete()) {
-                            grader.reportSemanticError(Project3SemanticError.redeclaration(ctx.Identifier()));
-                        }
-                    }
-
+                    symbolTable.exitScope();
                     StructType structType = new StructType(tagName, members);
-
-                    // Update or add the tag
-                    if (existingTag != null && existingTag.getScopeId() == symbolTable.getCurrentScopeId()) {
-                        symbolTable.updateTag(tagName, structType);
-                    } else {
-                        symbolTable.addTag(tagName, structType);
-                    }
+                    symbolTable.updateTag(tagName, structType); // 设置完成定义，内部 isInDef=false
                     return structType;
 
                 } else {
-                    // Incomplete struct reference: struct Identifier
+                    // 不完整 struct: 声明或递归引用
                     Symbol existingTag = symbolTable.lookupTag(tagName);
                     if (existingTag != null) {
-                        // Return the existing type (could be complete or incomplete)
                         return existingTag.getType();
                     } else {
-                        // Declare new incomplete struct type
-                        StructType structType = new StructType(tagName);
+                        // 注册声明，不在定义体内
+                        StructType structType = new StructType(tagName, false);
                         symbolTable.addTag(tagName, structType);
                         return structType;
                     }
@@ -631,7 +716,6 @@ public class Compiler extends AbstractCompiler {
             }
             return null;
         }
-
         @Override
         public Type visitBracket(SplcParser.BracketContext ctx) {
             // Block statement: LBRACE statement* RBRACE

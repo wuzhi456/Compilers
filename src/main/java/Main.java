@@ -8,7 +8,7 @@ import java.io.InputStream;
 public class Main {
     public static void main(String[] args) throws IOException {
         {
-            InputStream input = new FileInputStream("testcases/project3/ok_01.splc");
+            InputStream input = new FileInputStream("testcases/project3/err_04.splc");
             AbstractGrader grader = new Grader(input, System.out);
             grader.run();
         }
