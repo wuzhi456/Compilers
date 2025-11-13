@@ -630,11 +630,19 @@ public class Compiler extends AbstractCompiler {
                 // Function declaration: specifier Identifier LPAREN funcArgs RPAREN SEMI
                 TerminalNode funcName = ctx.Identifier();
                 List<Type> paramTypes = new ArrayList<>();
+                Set<String> paramNames = new HashSet<>();
                 if (ctx.funcArgs().specifier() != null && !ctx.funcArgs().specifier().isEmpty()) {
                     for (int i = 0; i < ctx.funcArgs().specifier().size(); i++) {
                         Type paramSpecType = visitSpecifier(ctx.funcArgs().specifier(i));
                         Type paramType = buildTypeFromVarDec(ctx.funcArgs().varDec(i), paramSpecType);
                         paramTypes.add(paramType);
+                        
+                        // Check for duplicate parameter names
+                        String paramName = extractIdentifierFromVarDec(ctx.funcArgs().varDec(i));
+                        if (paramNames.contains(paramName)) {
+                            grader.reportSemanticError(Project3SemanticError.redefinition(getIdentifierNode(ctx.funcArgs().varDec(i))));
+                        }
+                        paramNames.add(paramName);
                     }
                 }
 
