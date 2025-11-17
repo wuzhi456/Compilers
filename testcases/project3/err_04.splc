@@ -1,0 +1,11 @@
+struct S;
+
+int my_func() {
+    struct S {
+        int local_field;
+    } s;
+
+    struct S * p;
+}
+
+struct S s_var;
