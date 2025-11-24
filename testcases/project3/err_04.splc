@@ -1,11 +1,4 @@
-struct S;
-
-int my_func() {
-    struct S {
+struct S {
         int local_field;
-    } s;
-
-    struct S * p;
-}
-
-struct S s_var;
+};
+struct S;
