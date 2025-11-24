@@ -1244,8 +1244,8 @@ public class Compiler extends AbstractCompiler {
                 }
             }
 
-            // Should not reach here
-            return new ExprInfo(new BasicType(BasicType.Kind.INT), false);
+            // Should not reach here - all expression cases should be handled above
+            throw new RuntimeException("Unexpected expression structure in checkExpression");
         }
 
         @Override
