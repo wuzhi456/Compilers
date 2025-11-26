@@ -13,6 +13,7 @@ import org.antlr.v4.runtime.CharStream;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.Token;
+import org.antlr.v4.runtime.tree.ParseTree;
 import org.antlr.v4.runtime.tree.TerminalNode;
 
 import java.io.IOException;
@@ -613,43 +614,60 @@ public class Compiler extends AbstractCompiler {
 
                 symbolTable.exitScope();
 
-            } else if (ctx.varDec() != null) {
-                // Global variable definition: specifier varDec (ASSIGN expression)? SEMI
-                String varName = extractIdentifierFromVarDec(ctx.varDec());
-                Type varType = buildTypeFromVarDec(ctx.varDec(), specType);
-
-                if (!symbolTable.addOther(varName, varType, Symbol.Kind.VARIABLE)) {
-                    grader.reportSemanticError(Project3SemanticError.redefinition(getIdentifierNode(ctx.varDec())));
-                }
-                globalVariables.add(new Symbol(varName, varType, Symbol.Kind.VARIABLE, 0));
-
-
-                // Check for incomplete type
-                if (!isCompleteType(varType)) {
-                    // For arrays, the element type must be complete immediately
-                    // For direct struct types, we can defer the check per v4 spec
-                    if (requiresImmediateCompletenessCheck(varType)) {
-                        if (!isCompleteType(varType)) {
-                            grader.reportSemanticError(Project3SemanticError.definitionIncomplete(getIdentifierNode(ctx.varDec())));
+            } else if (ctx.varDec() != null && !ctx.varDec().isEmpty()) {
+                // Global variable definition: specifier varDec (ASSIGN expression)? (COMMA varDec (ASSIGN expression)?)* SEMI
+                List<SplcParser.VarDecContext> varDecs = ctx.varDec();
+                List<SplcParser.ExpressionContext> expressions = ctx.expression();
+                
+                // Map each varDec to its initialization expression (if any)
+                // by walking through children in order
+                Map<Integer, Integer> varDecToExprIndex = new HashMap<>();
+                int currentVarDecIndex = -1;
+                int currentExprIndex = 0;
+                
+                for (int i = 0; i < ctx.getChildCount(); i++) {
+                    ParseTree child = ctx.getChild(i);
+                    if (child instanceof SplcParser.VarDecContext) {
+                        currentVarDecIndex++;
+                    } else if (child instanceof TerminalNode) {
+                        TerminalNode tn = (TerminalNode) child;
+                        if (tn.getSymbol().getType() == SplcLexer.ASSIGN && currentVarDecIndex >= 0) {
+                            // The next expression belongs to the current varDec
+                            if (currentExprIndex < expressions.size()) {
+                                varDecToExprIndex.put(currentVarDecIndex, currentExprIndex);
+                                currentExprIndex++;
+                            }
                         }
-                    } else if (!isCompleteType(varType)) {
-                        // Defer check for direct struct types
-                        incompleteGlobals.put(new Symbol(varName, varType, Symbol.Kind.VARIABLE, 0), getIdentifierNode(ctx.varDec()));
                     }
                 }
+                
+                for (int i = 0; i < varDecs.size(); i++) {
+                    SplcParser.VarDecContext varDecCtx = varDecs.get(i);
+                    String varName = extractIdentifierFromVarDec(varDecCtx);
+                    Type varType = buildTypeFromVarDec(varDecCtx, specType);
 
-                // Check redefinition
-//                if (symbolTable.existsInCurrentScopeOther(varName)) {
-//                    grader.reportSemanticError(Project3SemanticError.redefinition(getIdentifierNode(ctx.varDec())));
-//                }
-                // 查 file scope，变量/函数/声明同名都不行
-//                for (Symbol s : symbolTable.getFileScopeOthers()) {
-//                    if (s.getName().equals(varName)) {
-//                        grader.reportSemanticError(Project3SemanticError.redefinition(getIdentifierNode(ctx.varDec())));
-//                        break;
-//                    }
-//                }
+                    if (!symbolTable.addOther(varName, varType, Symbol.Kind.VARIABLE)) {
+                        grader.reportSemanticError(Project3SemanticError.redefinition(getIdentifierNode(varDecCtx)));
+                    }
+                    globalVariables.add(new Symbol(varName, varType, Symbol.Kind.VARIABLE, 0));
 
+
+                    // Check for incomplete type
+                    if (!isCompleteType(varType)) {
+                        // For arrays, the element type must be complete immediately
+                        // For direct struct types, we can defer the check per v4 spec
+                        if (requiresImmediateCompletenessCheck(varType)) {
+                            grader.reportSemanticError(Project3SemanticError.definitionIncomplete(getIdentifierNode(varDecCtx)));
+                        } else {
+                            // Defer check for direct struct types
+                            incompleteGlobals.put(new Symbol(varName, varType, Symbol.Kind.VARIABLE, 0), getIdentifierNode(varDecCtx));
+                        }
+                    }
+                    
+                    // Note: initialization expressions are checked but global variables 
+                    // in this grammar don't need type checking for init expressions 
+                    // as per Project 4 spec (only local variables need this check)
+                }
 
             } else if (ctx.Identifier() != null && ctx.funcArgs() != null) {
                 // Function declaration: specifier Identifier LPAREN funcArgs RPAREN SEMI
@@ -768,35 +786,68 @@ public class Compiler extends AbstractCompiler {
 
         @Override
         public Type visitVarDecStmt(SplcParser.VarDecStmtContext ctx) {
-            // Local variable declaration: specifier varDec (ASSIGN expression)? SEMI
+            // Local variable declaration: specifier varDec (ASSIGN expression)? (COMMA varDec (ASSIGN expression)?)* SEMI
             Type specType = visitSpecifier(ctx.specifier());
-            String varName = extractIdentifierFromVarDec(ctx.varDec());
-            Type varType = buildTypeFromVarDec(ctx.varDec(), specType);
-
-            // Check for incomplete type
-            if (!isCompleteType(varType)) {
-                grader.reportSemanticError(Project3SemanticError.definitionIncomplete(
-                        getIdentifierNode(ctx.varDec())));
-            }
-
-            // Check redefinition in current scope
-            if (symbolTable.existsInCurrentScopeOther(varName)) {
-                grader.reportSemanticError(Project3SemanticError.redefinition(
-                        getIdentifierNode(ctx.varDec())));
-            }
-
-            symbolTable.addOther(varName, varType, Symbol.Kind.VARIABLE);
-
-            // Visit initialization expression if present and check type compatibility
-            if (ctx.expression() != null) {
-                try {
-                    ExprInfo exprInfo = checkExpression(ctx.expression());
-                    if (!typesEqual(varType, exprInfo.type)) {
-                        Project4SemanticError.unexpectedType(ctx.expression(), exprInfo.type).throwException();
+            
+            // Process variable declarations by iterating through children in order
+            // The structure is: specifier (varDec (ASSIGN expression)? (COMMA varDec (ASSIGN expression)?)*)+ SEMI
+            List<SplcParser.VarDecContext> varDecs = ctx.varDec();
+            List<SplcParser.ExpressionContext> expressions = ctx.expression();
+            
+            // Map each varDec to its initialization expression (if any)
+            // by walking through children in order
+            Map<Integer, Integer> varDecToExprIndex = new HashMap<>();
+            int currentVarDecIndex = -1;
+            int currentExprIndex = 0;
+            
+            for (int i = 0; i < ctx.getChildCount(); i++) {
+                ParseTree child = ctx.getChild(i);
+                if (child instanceof SplcParser.VarDecContext) {
+                    currentVarDecIndex++;
+                } else if (child instanceof TerminalNode) {
+                    TerminalNode tn = (TerminalNode) child;
+                    if (tn.getSymbol().getType() == SplcLexer.ASSIGN && currentVarDecIndex >= 0) {
+                        // The next expression belongs to the current varDec
+                        if (currentExprIndex < expressions.size()) {
+                            varDecToExprIndex.put(currentVarDecIndex, currentExprIndex);
+                            currentExprIndex++;
+                        }
                     }
-                } catch (Project4Exception ex) {
-                    hasSemanticErrors = true;
-                    grader.reportSemanticError(ex);
+                }
+            }
+            
+            // Now process each varDec
+            for (int i = 0; i < varDecs.size(); i++) {
+                SplcParser.VarDecContext varDecCtx = varDecs.get(i);
+                String varName = extractIdentifierFromVarDec(varDecCtx);
+                Type varType = buildTypeFromVarDec(varDecCtx, specType);
+
+                // Check for incomplete type
+                if (!isCompleteType(varType)) {
+                    grader.reportSemanticError(Project3SemanticError.definitionIncomplete(
+                            getIdentifierNode(varDecCtx)));
+                }
+
+                // Check redefinition in current scope
+                if (symbolTable.existsInCurrentScopeOther(varName)) {
+                    grader.reportSemanticError(Project3SemanticError.redefinition(
+                            getIdentifierNode(varDecCtx)));
+                }
+
+                symbolTable.addOther(varName, varType, Symbol.Kind.VARIABLE);
+
+                // Check initialization expression if present
+                if (varDecToExprIndex.containsKey(i)) {
+                    int exprIndex = varDecToExprIndex.get(i);
+                    try {
+                        ExprInfo exprInfo = checkExpression(expressions.get(exprIndex));
+                        if (!typesEqual(varType, exprInfo.type)) {
+                            Project4SemanticError.unexpectedType(expressions.get(exprIndex), exprInfo.type).throwException();
+                        }
+                    } catch (Project4Exception ex) {
+                        hasSemanticErrors = true;
+                        grader.reportSemanticError(ex);
+                    }
                 }
             }
             return null;
