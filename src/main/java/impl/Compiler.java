@@ -13,6 +13,7 @@ import org.antlr.v4.runtime.CharStream;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.Token;
+import org.antlr.v4.runtime.tree.ParseTree;
 import org.antlr.v4.runtime.tree.TerminalNode;
 
 import java.io.IOException;
@@ -30,12 +31,16 @@ public class Compiler extends AbstractCompiler {
         CommonTokenStream tokens = new CommonTokenStream(lexer);
         SplcParser parser = new SplcParser(tokens);
 
+        parser.removeErrorListeners();
+        lexer.removeErrorListeners();
+
         SplcParser.ProgramContext program = parser.program();
 
         // Phase 1: Semantic analysis and error checking
         SemanticAnalyzer analyzer = new SemanticAnalyzer(grader);
         analyzer.visit(program);
 
+        // If we get here, no semantic errors were found (or only Project 4 errors)
         // Phase 2: Print global variables and functions only if no errors
         if (!analyzer.hasSemanticErrors()) {
             grader.print("Variables:\n");
@@ -269,8 +274,6 @@ public class Compiler extends AbstractCompiler {
             if (this == obj) return true;
             if (!(obj instanceof StructType)) return false;
             StructType other = (StructType) obj;
-            // Two struct types are the same if they have the same tag
-            // and same completeness (in same scope context, but we check that elsewhere)
             return tag.equals(other.tag);
         }
 
@@ -325,6 +328,7 @@ public class Compiler extends AbstractCompiler {
         private final Deque<Map<String, Symbol>> otherScopes = new ArrayDeque<>();  // variables, functions
         private final Deque<Map<String, Symbol>> tagScopes = new ArrayDeque<>();    // struct tags
 
+        private static final int FILE_SCOPE_ID = 0;
         private int scopeIdCounter = 0;
         private int currentScopeId = 0;
 
@@ -360,26 +364,31 @@ public class Compiler extends AbstractCompiler {
             return true;
         }
 
-        // Update existing symbol in current scope (for converting function decl to definition)
-        public void updateOther(String name, Type type, Symbol.Kind kind) {
-            Map<String, Symbol> currentScope = otherScopes.peek();
-            currentScope.put(name, new Symbol(name, type, kind, currentScopeId));
-        }
+//        public void updateOther(String name, Type type, Symbol.Kind kind) {
+//            Map<String, Symbol> currentScope = otherScopes.peek();
+//            currentScope.put(name, new Symbol(name, type, kind, currentScopeId));
+//        }
 
-        // Add symbol to "tag" namespace (struct tags)
         public boolean addTag(String name, Type type) {
-            Map<String, Symbol> currentScope = tagScopes.peek();
-            if (currentScope.containsKey(name)) {
-                return false; // Already exists in current scope
+            // Structure tags always have file scope per C standard
+            Map<String, Symbol> fileScope = getFileTagScope();
+            if (fileScope.containsKey(name)) {
+                return false; // Already exists in file scope
             }
-            currentScope.put(name, new Symbol(name, type, Symbol.Kind.STRUCT_TAG, currentScopeId));
+            fileScope.put(name, new Symbol(name, type, Symbol.Kind.STRUCT_TAG, FILE_SCOPE_ID));
             return true;
         }
 
-        // Update existing tag in current scope (for completing incomplete structs)
+        // Update existing tag at file scope (for completing incomplete structs)
         public void updateTag(String name, Type type) {
-            Map<String, Symbol> currentScope = tagScopes.peek();
-            currentScope.put(name, new Symbol(name, type, Symbol.Kind.STRUCT_TAG, currentScopeId));
+            // Structure tags always have file scope per C standard
+            Map<String, Symbol> fileScope = getFileTagScope();
+            fileScope.put(name, new Symbol(name, type, Symbol.Kind.STRUCT_TAG, FILE_SCOPE_ID));
+        }
+
+        // Get file scope for tags (bottom of the stack) - O(1) access
+        private Map<String, Symbol> getFileTagScope() {
+            return ((ArrayDeque<Map<String, Symbol>>) tagScopes).peekLast();
         }
 
         // Lookup in "other" namespace
@@ -423,10 +432,6 @@ public class Compiler extends AbstractCompiler {
             return otherScopes.peek().containsKey(name);
         }
 
-        public boolean existsInCurrentScopeTag(String name) {
-            return tagScopes.peek().containsKey(name);
-        }
-
         // Get all symbols in file scope (for printing at the end)
         public List<Symbol> getFileScopeOthers() {
             if (otherScopes.isEmpty()) return Collections.emptyList();
@@ -442,7 +447,6 @@ public class Compiler extends AbstractCompiler {
 
     // ===== Semantic Analyzer =====
 
-    // proj4: Expr info: type + is it a value
     private static class ExprInfo {
         public final Type type;
         public final boolean isLvalue;
@@ -460,7 +464,7 @@ public class Compiler extends AbstractCompiler {
         private final List<Symbol> globalFunctions = new ArrayList<>();
 
         private final Map<Symbol, TerminalNode> incompleteGlobals = new LinkedHashMap<>();
-        private Type currentFunctionReturnType = null; // current function's return type
+        private Type currentFunctionReturnType = null; // Track current function's return type
         private boolean hasSemanticErrors = false; // Track if any semantic errors occurred
 
 
@@ -619,33 +623,15 @@ public class Compiler extends AbstractCompiler {
                 }
                 globalVariables.add(new Symbol(varName, varType, Symbol.Kind.VARIABLE, 0));
 
-
                 // Check for incomplete type
                 if (!isCompleteType(varType)) {
-                    // For arrays, the element type must be complete immediately
-                    // For direct struct types, we can defer the check per v4 spec
                     if (requiresImmediateCompletenessCheck(varType)) {
-                        if (!isCompleteType(varType)) {
-                            grader.reportSemanticError(Project3SemanticError.definitionIncomplete(getIdentifierNode(ctx.varDec())));
-                        }
-                    } else if (!isCompleteType(varType)) {
+                        grader.reportSemanticError(Project3SemanticError.definitionIncomplete(getIdentifierNode(ctx.varDec())));
+                    } else {
                         // Defer check for direct struct types
                         incompleteGlobals.put(new Symbol(varName, varType, Symbol.Kind.VARIABLE, 0), getIdentifierNode(ctx.varDec()));
                     }
                 }
-
-                // Check redefinition
-//                if (symbolTable.existsInCurrentScopeOther(varName)) {
-//                    grader.reportSemanticError(Project3SemanticError.redefinition(getIdentifierNode(ctx.varDec())));
-//                }
-                // 查 file scope，变量/函数/声明同名都不行
-//                for (Symbol s : symbolTable.getFileScopeOthers()) {
-//                    if (s.getName().equals(varName)) {
-//                        grader.reportSemanticError(Project3SemanticError.redefinition(getIdentifierNode(ctx.varDec())));
-//                        break;
-//                    }
-//                }
-
 
             } else if (ctx.Identifier() != null && ctx.funcArgs() != null) {
                 // Function declaration: specifier Identifier LPAREN funcArgs RPAREN SEMI
@@ -705,12 +691,10 @@ public class Compiler extends AbstractCompiler {
                 String tagName = ctx.Identifier().getText();
 
                 if (ctx.LBRACE() != null) {
-                    // 完整 struct 定义
                     Symbol existingTag = symbolTable.lookupForDef(tagName);
                     if (existingTag != null) {
                         grader.reportSemanticError(Project3SemanticError.redeclaration(ctx.Identifier()));
                     }
-                    // 占位符注册并标记“定义中”
                     symbolTable.enterScope();
                     StructType incompleteStruct = new StructType(tagName, true);
                     symbolTable.addTag(tagName, incompleteStruct);
@@ -970,7 +954,16 @@ public class Compiler extends AbstractCompiler {
                     Project4SemanticError.lvalueRequired(ctx).throwException();
                 }
 
-                StructType structType = (StructType) structInfo.type;
+                // Look up the struct type by tag to get the current (possibly completed) definition
+                StructType embeddedStructType = (StructType) structInfo.type;
+                Symbol currentTagSymbol = symbolTable.lookupTag(embeddedStructType.getTag());
+                StructType structType;
+                if (currentTagSymbol != null && currentTagSymbol.getType() instanceof StructType) {
+                    structType = (StructType) currentTagSymbol.getType();
+                } else {
+                    structType = embeddedStructType;
+                }
+
                 if (!structType.isComplete()) {
                     Project4SemanticError.unexpectedType(ctx, structType).throwException();
                     return new ExprInfo(new BasicType(BasicType.Kind.INT), true);
@@ -1009,7 +1002,16 @@ public class Compiler extends AbstractCompiler {
                     return new ExprInfo(new BasicType(BasicType.Kind.INT), true);
                 }
 
-                StructType structType = (StructType) referencedType;
+                // Look up the struct type by tag to get the current (possibly completed) definition
+                StructType embeddedStructType = (StructType) referencedType;
+                Symbol currentTagSymbol = symbolTable.lookupTag(embeddedStructType.getTag());
+                StructType structType;
+                if (currentTagSymbol != null && currentTagSymbol.getType() instanceof StructType) {
+                    structType = (StructType) currentTagSymbol.getType();
+                } else {
+                    structType = embeddedStructType;
+                }
+
                 if (!structType.isComplete()) {
                     Project4SemanticError.unexpectedType(ctx, ptrInfo.type).throwException();
                     return new ExprInfo(new BasicType(BasicType.Kind.INT), true);
@@ -1239,8 +1241,6 @@ public class Compiler extends AbstractCompiler {
                     return new ExprInfo(rhs.type, false); // Assignment returns rvalue
                 }
             }
-
-            // Should not reach here - all expression cases should be handled above
             throw new RuntimeException("Unexpected expression structure in checkExpression");
         }
 
