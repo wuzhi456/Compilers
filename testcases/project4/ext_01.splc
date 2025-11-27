@@ -1,35 +1,5 @@
-struct b {
-    struct b *ptr1;
-    struct a *ptr2;
-};
-struct a {
-    struct b b0;
-    int qwq;
-};
-int main0() {
-    struct b b0;
-    b0.ptr2->qw = 1;
-}
-
-struct dd {
-    struct dd *ptr1;
-    struct aa {
-        int aa;
-        int dd;
-    } *ptr2;
-};
-struct aa a0;
-struct dd d1;
-int main1(){
-    d1.ptr1->ptr2->dd = 3;
-    d1.ptr1->ptr2->da = 3;
-    d1.ptr1->ptr3->dd = 3;
-    d1.ptr3->ptr2->dd = 3;
-    d1.ptr2->dd = 3;
-    d1.ptr2->da = 3;
-    d1.ptr3->dd = 3;
-    a0.aa = 3;
-    (*(*(d1.ptr1)).ptr2).dd = 3;
-    *(d1.ptr1).ptr2;
-    (d1.ptr1).ptr2;
-}
+    int *a;
+    int b;
+    int *c = a - b;
+    int *d = a - c;
+    int *e = b;

@@ -31,8 +31,8 @@ public class Compiler extends AbstractCompiler {
         CommonTokenStream tokens = new CommonTokenStream(lexer);
         SplcParser parser = new SplcParser(tokens);
 
-//        parser.removeErrorListeners();
-//        lexer.removeErrorListeners();
+        parser.removeErrorListeners();
+        lexer.removeErrorListeners();
 
         SplcParser.ProgramContext program = parser.program();
 
@@ -274,6 +274,8 @@ public class Compiler extends AbstractCompiler {
             if (this == obj) return true;
             if (!(obj instanceof StructType)) return false;
             StructType other = (StructType) obj;
+            // Two struct types are the same if they have the same tag
+            // and same completeness (in same scope context, but we check that elsewhere)
             return tag.equals(other.tag);
         }
 
@@ -364,11 +366,13 @@ public class Compiler extends AbstractCompiler {
             return true;
         }
 
-//        public void updateOther(String name, Type type, Symbol.Kind kind) {
-//            Map<String, Symbol> currentScope = otherScopes.peek();
-//            currentScope.put(name, new Symbol(name, type, kind, currentScopeId));
-//        }
+        // Update existing symbol in current scope (for converting function decl to definition)
+        public void updateOther(String name, Type type, Symbol.Kind kind) {
+            Map<String, Symbol> currentScope = otherScopes.peek();
+            currentScope.put(name, new Symbol(name, type, kind, currentScopeId));
+        }
 
+        // Add symbol to "tag" namespace (struct tags) - always at file scope
         public boolean addTag(String name, Type type) {
             // Structure tags always have file scope per C standard
             Map<String, Symbol> fileScope = getFileTagScope();
@@ -432,6 +436,12 @@ public class Compiler extends AbstractCompiler {
             return otherScopes.peek().containsKey(name);
         }
 
+        public boolean existsInCurrentScopeTag(String name) {
+            // Structure tags always have file scope
+            Map<String, Symbol> fileScope = getFileTagScope();
+            return fileScope.containsKey(name);
+        }
+
         // Get all symbols in file scope (for printing at the end)
         public List<Symbol> getFileScopeOthers() {
             if (otherScopes.isEmpty()) return Collections.emptyList();
@@ -447,6 +457,7 @@ public class Compiler extends AbstractCompiler {
 
     // ===== Semantic Analyzer =====
 
+    // Expression info: type + value category
     private static class ExprInfo {
         public final Type type;
         public final boolean isLvalue;
@@ -625,11 +636,43 @@ public class Compiler extends AbstractCompiler {
 
                 // Check for incomplete type
                 if (!isCompleteType(varType)) {
+                    // For arrays, the element type must be complete immediately
+                    // For direct struct types, we can defer the check per v4 spec
                     if (requiresImmediateCompletenessCheck(varType)) {
                         grader.reportSemanticError(Project3SemanticError.definitionIncomplete(getIdentifierNode(ctx.varDec())));
                     } else {
                         // Defer check for direct struct types
                         incompleteGlobals.put(new Symbol(varName, varType, Symbol.Kind.VARIABLE, 0), getIdentifierNode(ctx.varDec()));
+                    }
+                }
+
+                // Check initialization expression if present using assignment rules [2.2.14]
+                if (ctx.expression() != null) {
+                    try {
+                        ExprInfo exprInfo = checkExpression(ctx.expression());
+
+                        // Check if lhs or rhs is array type - arrays cannot be assigned
+                        if (varType instanceof ArrayType || exprInfo.type instanceof ArrayType) {
+                            Project4SemanticError.unmatchedTypeForBinaryOP(ctx.expression(), ctx.ASSIGN().getSymbol(), varType, exprInfo.type).throwException();
+                        }
+
+                        // Check that both sides are integer or pointer types
+                        if (!isIntegerType(varType) && !isPointerType(varType)) {
+                            Project4SemanticError.unmatchedTypeForBinaryOP(ctx.expression(), ctx.ASSIGN().getSymbol(), varType, exprInfo.type).throwException();
+                        }
+                        if (!isIntegerType(exprInfo.type) && !isPointerType(exprInfo.type)) {
+                            Project4SemanticError.unmatchedTypeForBinaryOP(ctx.expression(), ctx.ASSIGN().getSymbol(), varType, exprInfo.type).throwException();
+                        }
+
+                        // Special case: allow 0 as null pointer
+                        boolean rhsIsZero = isConstantZero(ctx.expression());
+
+                        if (!rhsIsZero && !typesEqual(varType, exprInfo.type)) {
+                            Project4SemanticError.unmatchedTypeForBinaryOP(ctx.expression(), ctx.ASSIGN().getSymbol(), varType, exprInfo.type).throwException();
+                        }
+                    } catch (Project4Exception ex) {
+                        hasSemanticErrors = true;
+                        grader.reportSemanticError(ex);
                     }
                 }
 
@@ -691,10 +734,12 @@ public class Compiler extends AbstractCompiler {
                 String tagName = ctx.Identifier().getText();
 
                 if (ctx.LBRACE() != null) {
+                    // 完整 struct 定义
                     Symbol existingTag = symbolTable.lookupForDef(tagName);
                     if (existingTag != null) {
                         grader.reportSemanticError(Project3SemanticError.redeclaration(ctx.Identifier()));
                     }
+                    // 占位符注册并标记“定义中”
                     symbolTable.enterScope();
                     StructType incompleteStruct = new StructType(tagName, true);
                     symbolTable.addTag(tagName, incompleteStruct);
@@ -768,11 +813,29 @@ public class Compiler extends AbstractCompiler {
             symbolTable.addOther(varName, varType, Symbol.Kind.VARIABLE);
 
             // Visit initialization expression if present and check type compatibility
+            // Use assignment rules [2.2.14] with unmatchedTypeForBinaryOP for type errors
             if (ctx.expression() != null) {
                 try {
                     ExprInfo exprInfo = checkExpression(ctx.expression());
-                    if (!typesEqual(varType, exprInfo.type)) {
-                        Project4SemanticError.unexpectedType(ctx.expression(), exprInfo.type).throwException();
+
+                    // Check if lhs or rhs is array type - arrays cannot be assigned
+                    if (varType instanceof ArrayType || exprInfo.type instanceof ArrayType) {
+                        Project4SemanticError.unmatchedTypeForBinaryOP(ctx.expression(), ctx.ASSIGN().getSymbol(), varType, exprInfo.type).throwException();
+                    }
+
+                    // Check that both sides are integer or pointer types
+                    if (!isIntegerType(varType) && !isPointerType(varType)) {
+                        Project4SemanticError.unmatchedTypeForBinaryOP(ctx.expression(), ctx.ASSIGN().getSymbol(), varType, exprInfo.type).throwException();
+                    }
+                    if (!isIntegerType(exprInfo.type) && !isPointerType(exprInfo.type)) {
+                        Project4SemanticError.unmatchedTypeForBinaryOP(ctx.expression(), ctx.ASSIGN().getSymbol(), varType, exprInfo.type).throwException();
+                    }
+
+                    // Special case: allow 0 as null pointer
+                    boolean rhsIsZero = isConstantZero(ctx.expression());
+
+                    if (!rhsIsZero && !typesEqual(varType, exprInfo.type)) {
+                        Project4SemanticError.unmatchedTypeForBinaryOP(ctx.expression(), ctx.ASSIGN().getSymbol(), varType, exprInfo.type).throwException();
                     }
                 } catch (Project4Exception ex) {
                     hasSemanticErrors = true;
@@ -1241,6 +1304,8 @@ public class Compiler extends AbstractCompiler {
                     return new ExprInfo(rhs.type, false); // Assignment returns rvalue
                 }
             }
+
+            // Should not reach here - all expression cases should be handled above
             throw new RuntimeException("Unexpected expression structure in checkExpression");
         }
 
