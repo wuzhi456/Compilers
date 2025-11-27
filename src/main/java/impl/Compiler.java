@@ -330,6 +330,7 @@ public class Compiler extends AbstractCompiler {
         private final Deque<Map<String, Symbol>> otherScopes = new ArrayDeque<>();  // variables, functions
         private final Deque<Map<String, Symbol>> tagScopes = new ArrayDeque<>();    // struct tags
 
+        private static final int FILE_SCOPE_ID = 0;
         private int scopeIdCounter = 0;
         private int currentScopeId = 0;
 
@@ -371,20 +372,27 @@ public class Compiler extends AbstractCompiler {
             currentScope.put(name, new Symbol(name, type, kind, currentScopeId));
         }
 
-        // Add symbol to "tag" namespace (struct tags)
+        // Add symbol to "tag" namespace (struct tags) - always at file scope
         public boolean addTag(String name, Type type) {
-            Map<String, Symbol> currentScope = tagScopes.peek();
-            if (currentScope.containsKey(name)) {
-                return false; // Already exists in current scope
+            // Structure tags always have file scope per C standard
+            Map<String, Symbol> fileScope = getFileTagScope();
+            if (fileScope.containsKey(name)) {
+                return false; // Already exists in file scope
             }
-            currentScope.put(name, new Symbol(name, type, Symbol.Kind.STRUCT_TAG, currentScopeId));
+            fileScope.put(name, new Symbol(name, type, Symbol.Kind.STRUCT_TAG, FILE_SCOPE_ID));
             return true;
         }
 
-        // Update existing tag in current scope (for completing incomplete structs)
+        // Update existing tag at file scope (for completing incomplete structs)
         public void updateTag(String name, Type type) {
-            Map<String, Symbol> currentScope = tagScopes.peek();
-            currentScope.put(name, new Symbol(name, type, Symbol.Kind.STRUCT_TAG, currentScopeId));
+            // Structure tags always have file scope per C standard
+            Map<String, Symbol> fileScope = getFileTagScope();
+            fileScope.put(name, new Symbol(name, type, Symbol.Kind.STRUCT_TAG, FILE_SCOPE_ID));
+        }
+        
+        // Get file scope for tags (bottom of the stack) - O(1) access
+        private Map<String, Symbol> getFileTagScope() {
+            return ((ArrayDeque<Map<String, Symbol>>) tagScopes).peekLast();
         }
 
         // Lookup in "other" namespace
@@ -429,7 +437,9 @@ public class Compiler extends AbstractCompiler {
         }
 
         public boolean existsInCurrentScopeTag(String name) {
-            return tagScopes.peek().containsKey(name);
+            // Structure tags always have file scope
+            Map<String, Symbol> fileScope = getFileTagScope();
+            return fileScope.containsKey(name);
         }
 
         // Get all symbols in file scope (for printing at the end)
@@ -1025,7 +1035,16 @@ public class Compiler extends AbstractCompiler {
                     Project4SemanticError.lvalueRequired(ctx).throwException();
                 }
                 
-                StructType structType = (StructType) structInfo.type;
+                // Look up the struct type by tag to get the current (possibly completed) definition
+                StructType embeddedStructType = (StructType) structInfo.type;
+                Symbol currentTagSymbol = symbolTable.lookupTag(embeddedStructType.getTag());
+                StructType structType;
+                if (currentTagSymbol != null && currentTagSymbol.getType() instanceof StructType) {
+                    structType = (StructType) currentTagSymbol.getType();
+                } else {
+                    structType = embeddedStructType;
+                }
+                
                 if (!structType.isComplete()) {
                     Project4SemanticError.unexpectedType(ctx, structType).throwException();
                     return new ExprInfo(new BasicType(BasicType.Kind.INT), true);
@@ -1064,7 +1083,16 @@ public class Compiler extends AbstractCompiler {
                     return new ExprInfo(new BasicType(BasicType.Kind.INT), true);
                 }
                 
-                StructType structType = (StructType) referencedType;
+                // Look up the struct type by tag to get the current (possibly completed) definition
+                StructType embeddedStructType = (StructType) referencedType;
+                Symbol currentTagSymbol = symbolTable.lookupTag(embeddedStructType.getTag());
+                StructType structType;
+                if (currentTagSymbol != null && currentTagSymbol.getType() instanceof StructType) {
+                    structType = (StructType) currentTagSymbol.getType();
+                } else {
+                    structType = embeddedStructType;
+                }
+                
                 if (!structType.isComplete()) {
                     Project4SemanticError.unexpectedType(ctx, ptrInfo.type).throwException();
                     return new ExprInfo(new BasicType(BasicType.Kind.INT), true);
