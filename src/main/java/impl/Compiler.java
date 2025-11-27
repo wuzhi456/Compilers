@@ -646,6 +646,36 @@ public class Compiler extends AbstractCompiler {
                     }
                 }
 
+                // Check initialization expression if present using assignment rules [2.2.14]
+                if (ctx.expression() != null) {
+                    try {
+                        ExprInfo exprInfo = checkExpression(ctx.expression());
+                        
+                        // Check if lhs or rhs is array type - arrays cannot be assigned
+                        if (varType instanceof ArrayType || exprInfo.type instanceof ArrayType) {
+                            Project4SemanticError.unmatchedTypeForBinaryOP(ctx.expression(), ctx.ASSIGN().getSymbol(), varType, exprInfo.type).throwException();
+                        }
+                        
+                        // Check that both sides are integer or pointer types
+                        if (!isIntegerType(varType) && !isPointerType(varType)) {
+                            Project4SemanticError.unmatchedTypeForBinaryOP(ctx.expression(), ctx.ASSIGN().getSymbol(), varType, exprInfo.type).throwException();
+                        }
+                        if (!isIntegerType(exprInfo.type) && !isPointerType(exprInfo.type)) {
+                            Project4SemanticError.unmatchedTypeForBinaryOP(ctx.expression(), ctx.ASSIGN().getSymbol(), varType, exprInfo.type).throwException();
+                        }
+                        
+                        // Special case: allow 0 as null pointer
+                        boolean rhsIsZero = isConstantZero(ctx.expression());
+                        
+                        if (!rhsIsZero && !typesEqual(varType, exprInfo.type)) {
+                            Project4SemanticError.unmatchedTypeForBinaryOP(ctx.expression(), ctx.ASSIGN().getSymbol(), varType, exprInfo.type).throwException();
+                        }
+                    } catch (Project4Exception ex) {
+                        hasSemanticErrors = true;
+                        grader.reportSemanticError(ex);
+                    }
+                }
+
             } else if (ctx.Identifier() != null && ctx.funcArgs() != null) {
                 // Function declaration: specifier Identifier LPAREN funcArgs RPAREN SEMI
                 TerminalNode funcName = ctx.Identifier();
