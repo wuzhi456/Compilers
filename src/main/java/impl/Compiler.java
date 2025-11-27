@@ -31,8 +31,8 @@ public class Compiler extends AbstractCompiler {
         CommonTokenStream tokens = new CommonTokenStream(lexer);
         SplcParser parser = new SplcParser(tokens);
 
-        parser.removeErrorListeners();
-        lexer.removeErrorListeners();
+//        parser.removeErrorListeners();
+//        lexer.removeErrorListeners();
 
         SplcParser.ProgramContext program = parser.program();
 
