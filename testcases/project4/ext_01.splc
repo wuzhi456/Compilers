@@ -1,12 +1,17 @@
-struct s0 {
-    int a[10][20];
-    int b;
+struct A{
+    int x;
+    struct B{
+        int x;
+    }ccc;
 };
-
 int main() {
-    struct s0 vars;
-    vars.b = 123;
-    vars.a[1] = vars;
-
-    return vars.a;
+    int* p1;
+    int *p2;
+    int a;
+    struct A b;
+    b.x = 1;
+    b.y = 1;
+    b.ccc.x = 1;
+    b.ccc.y = 1;
+    return 0;
 }

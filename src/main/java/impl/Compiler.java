@@ -4,12 +4,15 @@ import framework.AbstractCompiler;
 import framework.AbstractGrader;
 import framework.lang.Type;
 import framework.project3.Project3SemanticError;
+import framework.project4.Project4SemanticError;
+import framework.project4.Project4Exception;
 import generated.Splc.SplcBaseVisitor;
 import generated.Splc.SplcLexer;
 import generated.Splc.SplcParser;
 import org.antlr.v4.runtime.CharStream;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
+import org.antlr.v4.runtime.Token;
 import org.antlr.v4.runtime.tree.TerminalNode;
 
 import java.io.IOException;
@@ -27,25 +30,23 @@ public class Compiler extends AbstractCompiler {
         CommonTokenStream tokens = new CommonTokenStream(lexer);
         SplcParser parser = new SplcParser(tokens);
 
-        parser.removeErrorListeners();
-        lexer.removeErrorListeners();
-
         SplcParser.ProgramContext program = parser.program();
 
         // Phase 1: Semantic analysis and error checking
         SemanticAnalyzer analyzer = new SemanticAnalyzer(grader);
         analyzer.visit(program);
 
-        // If we get here, no semantic errors were found
-        // Phase 2: Print global variables and functions
-        grader.print("Variables:\n");
-        for (Symbol symbol : analyzer.getGlobalVariables()) {
-            grader.print(symbol.getName() + ": " + symbol.getType().fullPrint() + "\n");
-        }
-        grader.print("\n");
-        grader.print("Functions:\n");
-        for (Symbol symbol : analyzer.getGlobalFunctions()) {
-            grader.print(symbol.getName() + ": " + symbol.getType().prettyPrint() + "\n");
+        // Phase 2: Print global variables and functions only if no errors
+        if (!analyzer.hasSemanticErrors()) {
+            grader.print("Variables:\n");
+            for (Symbol symbol : analyzer.getGlobalVariables()) {
+                grader.print(symbol.getName() + ": " + symbol.getType().fullPrint() + "\n");
+            }
+            grader.print("\n");
+            grader.print("Functions:\n");
+            for (Symbol symbol : analyzer.getGlobalFunctions()) {
+                grader.print(symbol.getName() + ": " + symbol.getType().prettyPrint() + "\n");
+            }
         }
     }
 
@@ -441,6 +442,17 @@ public class Compiler extends AbstractCompiler {
 
     // ===== Semantic Analyzer =====
 
+    // proj4: Expr info: type + is it a value
+    private static class ExprInfo {
+        public final Type type;
+        public final boolean isLvalue;
+
+        public ExprInfo(Type type, boolean isLvalue) {
+            this.type = type;
+            this.isLvalue = isLvalue;
+        }
+    }
+
     private static class SemanticAnalyzer extends SplcBaseVisitor<Type> {
         private final AbstractGrader grader;
         private final SymbolTable symbolTable;
@@ -448,6 +460,8 @@ public class Compiler extends AbstractCompiler {
         private final List<Symbol> globalFunctions = new ArrayList<>();
 
         private final Map<Symbol, TerminalNode> incompleteGlobals = new LinkedHashMap<>();
+        private Type currentFunctionReturnType = null; // current function's return type
+        private boolean hasSemanticErrors = false; // Track if any semantic errors occurred
 
 
         public SemanticAnalyzer(AbstractGrader grader) {
@@ -461,6 +475,10 @@ public class Compiler extends AbstractCompiler {
 
         public List<Symbol> getGlobalFunctions() {
             return globalFunctions;
+        }
+
+        public boolean hasSemanticErrors() {
+            return hasSemanticErrors;
         }
 
         private List<String> getTagNamesFromType(Type type) {
@@ -561,6 +579,7 @@ public class Compiler extends AbstractCompiler {
 
                 // Enter function scope for parameters and body
                 symbolTable.enterScope();
+                currentFunctionReturnType = specType; // Track return type for return statement checking
 
                 // Add parameters to the function scope
                 if (ctx.funcArgs().specifier() != null && !ctx.funcArgs().specifier().isEmpty()) {
@@ -764,16 +783,35 @@ public class Compiler extends AbstractCompiler {
 
             symbolTable.addOther(varName, varType, Symbol.Kind.VARIABLE);
 
-            // Visit initialization expression if present
+            // Visit initialization expression if present and check type compatibility
             if (ctx.expression() != null) {
-                visitExpression(ctx.expression());
+                try {
+                    ExprInfo exprInfo = checkExpression(ctx.expression());
+                    if (!typesEqual(varType, exprInfo.type)) {
+                        Project4SemanticError.unexpectedType(ctx.expression(), exprInfo.type).throwException();
+                    }
+                } catch (Project4Exception ex) {
+                    hasSemanticErrors = true;
+                    grader.reportSemanticError(ex);
+                }
             }
             return null;
         }
 
         @Override
         public Type visitIfStmt(SplcParser.IfStmtContext ctx) {
-            visitExpression(ctx.expression());
+            // Check condition type
+            try {
+                ExprInfo condInfo = checkExpression(ctx.expression());
+                // Condition must be integer or pointer
+                if (!isIntegerType(condInfo.type) && !isPointerType(condInfo.type)) {
+                    Project4SemanticError.unexpectedType(ctx.expression(), condInfo.type).throwException();
+                }
+            } catch (Project4Exception ex) {
+                hasSemanticErrors = true;
+                grader.reportSemanticError(ex);
+            }
+
             visit(ctx.statement(0));
             if (ctx.statement().size() > 1) {
                 visit(ctx.statement(1));
@@ -783,45 +821,460 @@ public class Compiler extends AbstractCompiler {
 
         @Override
         public Type visitWhileStmt(SplcParser.WhileStmtContext ctx) {
-            visitExpression(ctx.expression());
+            // Check condition type
+            try {
+                ExprInfo condInfo = checkExpression(ctx.expression());
+                // Condition must be integer or pointer
+                if (!isIntegerType(condInfo.type) && !isPointerType(condInfo.type)) {
+                    Project4SemanticError.unexpectedType(ctx.expression(), condInfo.type).throwException();
+                }
+            } catch (Project4Exception ex) {
+                hasSemanticErrors = true;
+                grader.reportSemanticError(ex);
+            }
+
             visit(ctx.statement());
             return null;
         }
 
         @Override
         public Type visitReturnStmt(SplcParser.ReturnStmtContext ctx) {
-            visitExpression(ctx.expression());
+            // Check return type
+            try {
+                ExprInfo exprInfo = checkExpression(ctx.expression());
+                if (currentFunctionReturnType != null && !typesEqual(currentFunctionReturnType, exprInfo.type)) {
+                    Project4SemanticError.unexpectedType(ctx.expression(), exprInfo.type).throwException();
+                }
+            } catch (Project4Exception ex) {
+                hasSemanticErrors = true;
+                grader.reportSemanticError(ex);
+            }
             return null;
         }
 
         @Override
         public Type visitExprStmt(SplcParser.ExprStmtContext ctx) {
-            visitExpression(ctx.expression());
+            // Just check the expression
+            try {
+                checkExpression(ctx.expression());
+            } catch (Project4Exception ex) {
+                hasSemanticErrors = true;
+                grader.reportSemanticError(ex);
+            }
             return null;
         }
 
-        @Override
-        public Type visitExpression(SplcParser.ExpressionContext ctx) {
-            // First, check if this expression has an identifier that needs to be looked up
-            if (ctx.Identifier() != null) {
+        // ===== Expression Type Checking =====
+
+        private ExprInfo checkExpression(SplcParser.ExpressionContext ctx) {
+            // Identifier (but not member access or function call)
+            if (ctx.Identifier() != null && ctx.LPAREN() == null && ctx.DOT() == null && ctx.ARROW() == null) {
                 String name = ctx.Identifier().getText();
                 Symbol symbol = symbolTable.lookupOther(name);
                 if (symbol == null) {
                     grader.reportSemanticError(Project3SemanticError.undeclaredUse(ctx.Identifier()));
+                    return new ExprInfo(new BasicType(BasicType.Kind.INT), false); // Error recovery
+                }
+                if (symbol.getKind() == Symbol.Kind.FUNCTION || symbol.getKind() == Symbol.Kind.FUNCTION_DECL) {
+                    Project4SemanticError.identifierNotVariable(ctx, name).throwException();
+                }
+                return new ExprInfo(symbol.getType(), true); // Variables are lvalues
+            }
+
+            // Number
+            if (ctx.Number() != null) {
+                return new ExprInfo(new BasicType(BasicType.Kind.INT), false);
+            }
+
+            // Parenthesized expression
+            if (ctx.LPAREN() != null && ctx.expression().size() == 1 && ctx.Identifier() == null) {
+                ExprInfo inner = checkExpression(ctx.expression(0));
+                return new ExprInfo(inner.type, inner.isLvalue);
+            }
+
+            // Function call: Identifier LPAREN (expression (COMMA expression)*)? RPAREN
+            if (ctx.Identifier() != null && ctx.LPAREN() != null) {
+                String funcName = ctx.Identifier().getText();
+                Symbol symbol = symbolTable.lookupOther(funcName);
+                if (symbol == null) {
+                    grader.reportSemanticError(Project3SemanticError.undeclaredUse(ctx.Identifier()));
+                    return new ExprInfo(new BasicType(BasicType.Kind.INT), false);
+                }
+                if (symbol.getKind() != Symbol.Kind.FUNCTION && symbol.getKind() != Symbol.Kind.FUNCTION_DECL) {
+                    Project4SemanticError.identifierNotFunction(ctx, funcName).throwException();
+                }
+
+                FunctionType funcType = (FunctionType) symbol.getType();
+                List<Type> paramTypes = funcType.getParameterTypes();
+
+                // Get actual arguments
+                List<SplcParser.ExpressionContext> args = new ArrayList<>();
+                for (int i = 0; i < ctx.expression().size(); i++) {
+                    args.add(ctx.expression(i));
+                }
+
+                // Check parameter count
+                if (args.size() != paramTypes.size()) {
+                    Project4SemanticError.badParamCount(ctx, paramTypes.size(), args.size()).throwException();
+                }
+
+                // Check parameter types
+                for (int i = 0; i < args.size(); i++) {
+                    ExprInfo argInfo = checkExpression(args.get(i));
+                    if (!typesEqual(paramTypes.get(i), argInfo.type)) {
+                        Project4SemanticError.badParamType(ctx, i + 1).throwException();
+                    }
+                }
+
+                return new ExprInfo(funcType.getReturnType(), false);
+            }
+
+            // Array access: expression LBRACK expression RBRACK
+            if (ctx.LBRACK() != null) {
+                ExprInfo arrayInfo = checkExpression(ctx.expression(0));
+                ExprInfo indexInfo = checkExpression(ctx.expression(1));
+
+                // Index must be integer
+                if (!isIntegerType(indexInfo.type)) {
+                    Project4SemanticError.unexpectedType(ctx, indexInfo.type).throwException();
+                }
+
+                Type elementType;
+                if (arrayInfo.type instanceof ArrayType) {
+                    // If it's an array, it must be an lvalue
+                    if (!arrayInfo.isLvalue) {
+                        Project4SemanticError.unexpectedType(ctx, arrayInfo.type).throwException();
+                    }
+                    elementType = ((ArrayType) arrayInfo.type).getElementType();
+                } else if (arrayInfo.type instanceof PointerType) {
+                    elementType = ((PointerType) arrayInfo.type).getReferencedType();
+                } else {
+                    Project4SemanticError.unexpectedType(ctx, arrayInfo.type).throwException();
+                    return new ExprInfo(new BasicType(BasicType.Kind.INT), true);
+                }
+
+                return new ExprInfo(elementType, true); // Array access is lvalue
+            }
+
+            // Struct member access: expression DOT Identifier
+            if (ctx.DOT() != null) {
+                ExprInfo structInfo = checkExpression(ctx.expression(0));
+                String memberName = ctx.Identifier().getText();
+
+                if (!(structInfo.type instanceof StructType)) {
+                    Project4SemanticError.unexpectedType(ctx, structInfo.type).throwException();
+                    return new ExprInfo(new BasicType(BasicType.Kind.INT), true);
+                }
+
+                if (!structInfo.isLvalue) {
+                    Project4SemanticError.lvalueRequired(ctx).throwException();
+                }
+
+                StructType structType = (StructType) structInfo.type;
+                if (!structType.isComplete()) {
+                    Project4SemanticError.unexpectedType(ctx, structType).throwException();
+                    return new ExprInfo(new BasicType(BasicType.Kind.INT), true);
+                }
+
+                // Find member
+                Type memberType = null;
+                for (StructType.Member member : structType.getMembers()) {
+                    if (member.name.equals(memberName)) {
+                        memberType = member.type;
+                        break;
+                    }
+                }
+
+                if (memberType == null) {
+                    Project4SemanticError.badMember(ctx, structType, memberName).throwException();
+                    return new ExprInfo(new BasicType(BasicType.Kind.INT), true);
+                }
+
+                return new ExprInfo(memberType, true); // Member access is lvalue
+            }
+
+            // Struct pointer access: expression ARROW Identifier
+            if (ctx.ARROW() != null) {
+                ExprInfo ptrInfo = checkExpression(ctx.expression(0));
+                String memberName = ctx.Identifier().getText();
+
+                if (!(ptrInfo.type instanceof PointerType)) {
+                    Project4SemanticError.unexpectedType(ctx, ptrInfo.type).throwException();
+                    return new ExprInfo(new BasicType(BasicType.Kind.INT), true);
+                }
+
+                Type referencedType = ((PointerType) ptrInfo.type).getReferencedType();
+                if (!(referencedType instanceof StructType)) {
+                    Project4SemanticError.unexpectedType(ctx, ptrInfo.type).throwException();
+                    return new ExprInfo(new BasicType(BasicType.Kind.INT), true);
+                }
+
+                StructType structType = (StructType) referencedType;
+                if (!structType.isComplete()) {
+                    Project4SemanticError.unexpectedType(ctx, ptrInfo.type).throwException();
+                    return new ExprInfo(new BasicType(BasicType.Kind.INT), true);
+                }
+
+                // Find member
+                Type memberType = null;
+                for (StructType.Member member : structType.getMembers()) {
+                    if (member.name.equals(memberName)) {
+                        memberType = member.type;
+                        break;
+                    }
+                }
+
+                if (memberType == null) {
+                    Project4SemanticError.badMember(ctx, structType, memberName).throwException();
+                    return new ExprInfo(new BasicType(BasicType.Kind.INT), true);
+                }
+
+                return new ExprInfo(memberType, true); // Member access is lvalue
+            }
+
+            // Postfix increment/decrement: expression INC/DEC
+            if (ctx.INC() != null || ctx.DEC() != null) {
+                if (ctx.expression().size() == 1) {
+                    ExprInfo operandInfo = checkExpression(ctx.expression(0));
+
+                    if (!operandInfo.isLvalue) {
+                        Project4SemanticError.lvalueRequired(ctx).throwException();
+                    }
+
+                    if (!isIntegerType(operandInfo.type) && !isPointerType(operandInfo.type)) {
+                        Project4SemanticError.unexpectedType(ctx, operandInfo.type).throwException();
+                    }
+
+                    return new ExprInfo(operandInfo.type, false); // Result is rvalue
                 }
             }
 
-            // Visit all sub-expressions
-            for (int i = 0; i < ctx.getChildCount(); i++) {
-                if (ctx.getChild(i) instanceof SplcParser.ExpressionContext) {
-                    visitExpression((SplcParser.ExpressionContext) ctx.getChild(i));
+            // Prefix unary operators
+            if (ctx.expression().size() == 1) {
+                // Prefix increment/decrement
+                if ((ctx.INC() != null || ctx.DEC() != null) && ctx.expression().size() == 1) {
+                    ExprInfo operandInfo = checkExpression(ctx.expression(0));
+
+                    if (!operandInfo.isLvalue) {
+                        Project4SemanticError.lvalueRequired(ctx).throwException();
+                    }
+
+                    if (!isIntegerType(operandInfo.type) && !isPointerType(operandInfo.type)) {
+                        Project4SemanticError.unexpectedType(ctx, operandInfo.type).throwException();
+                    }
+
+                    return new ExprInfo(operandInfo.type, false); // Result is rvalue
+                }
+
+                // Unary plus/minus
+                if (ctx.PLUS() != null || ctx.MINUS() != null) {
+                    ExprInfo operandInfo = checkExpression(ctx.expression(0));
+
+                    if (!isIntegerType(operandInfo.type)) {
+                        Project4SemanticError.unexpectedType(ctx, operandInfo.type).throwException();
+                    }
+
+                    return new ExprInfo(new BasicType(BasicType.Kind.INT), false);
+                }
+
+                // Logical NOT
+                if (ctx.NOT() != null) {
+                    ExprInfo operandInfo = checkExpression(ctx.expression(0));
+
+                    if (!isIntegerType(operandInfo.type) && !isPointerType(operandInfo.type)) {
+                        Project4SemanticError.unexpectedType(ctx, operandInfo.type).throwException();
+                    }
+
+                    return new ExprInfo(new BasicType(BasicType.Kind.INT), false);
+                }
+
+                // Dereference: STAR expression
+                if (ctx.STAR() != null) {
+                    ExprInfo operandInfo = checkExpression(ctx.expression(0));
+
+                    if (!(operandInfo.type instanceof PointerType)) {
+                        Project4SemanticError.unexpectedType(ctx, operandInfo.type).throwException();
+                        return new ExprInfo(new BasicType(BasicType.Kind.INT), true);
+                    }
+
+                    Type referencedType = ((PointerType) operandInfo.type).getReferencedType();
+                    return new ExprInfo(referencedType, true); // Dereference is lvalue
+                }
+
+                // Address-of: AMP expression
+                if (ctx.AMP() != null) {
+                    ExprInfo operandInfo = checkExpression(ctx.expression(0));
+
+                    if (!operandInfo.isLvalue) {
+                        Project4SemanticError.lvalueRequired(ctx).throwException();
+                    }
+
+                    Type ptrType = new PointerType(operandInfo.type);
+                    return new ExprInfo(ptrType, false); // Address-of is rvalue
                 }
             }
 
+            // Binary operators
+            if (ctx.expression().size() == 2) {
+                ExprInfo lhs = checkExpression(ctx.expression(0));
+                ExprInfo rhs = checkExpression(ctx.expression(1));
+
+                // Arithmetic: *, /, %
+                if (ctx.STAR() != null || ctx.DIV() != null || ctx.MOD() != null) {
+                    if (!isIntegerType(lhs.type)) {
+                        Project4SemanticError.unexpectedType(ctx, lhs.type).throwException();
+                    }
+                    if (!isIntegerType(rhs.type)) {
+                        Project4SemanticError.unexpectedType(ctx, rhs.type).throwException();
+                    }
+                    return new ExprInfo(new BasicType(BasicType.Kind.INT), false);
+                }
+
+                // Addition/Subtraction
+                if (ctx.PLUS() != null || ctx.MINUS() != null) {
+                    Token op = ctx.PLUS() != null ? ctx.PLUS().getSymbol() : ctx.MINUS().getSymbol();
+
+                    // Both integer
+                    if (isIntegerType(lhs.type) && isIntegerType(rhs.type)) {
+                        return new ExprInfo(new BasicType(BasicType.Kind.INT), false);
+                    }
+
+                    // Pointer + integer or integer + pointer (for addition only)
+                    if (ctx.PLUS() != null) {
+                        if (isPointerType(lhs.type) && isIntegerType(rhs.type)) {
+                            return new ExprInfo(lhs.type, false);
+                        }
+                        if (isIntegerType(lhs.type) && isPointerType(rhs.type)) {
+                            return new ExprInfo(rhs.type, false);
+                        }
+                    }
+
+                    // Pointer - integer
+                    if (ctx.MINUS() != null) {
+                        if (isPointerType(lhs.type) && isIntegerType(rhs.type)) {
+                            return new ExprInfo(lhs.type, false);
+                        }
+                        // Pointer - pointer
+                        if (isPointerType(lhs.type) && isPointerType(rhs.type)) {
+                            if (!typesEqual(lhs.type, rhs.type)) {
+                                Project4SemanticError.unmatchedTypeForBinaryOP(ctx, op, lhs.type, rhs.type).throwException();
+                            }
+                            return new ExprInfo(new BasicType(BasicType.Kind.INT), false);
+                        }
+                    }
+
+                    Project4SemanticError.unmatchedTypeForBinaryOP(ctx, op, lhs.type, rhs.type).throwException();
+                }
+
+                // Comparison: <, <=, >, >=
+                if (ctx.LT() != null || ctx.LE() != null || ctx.GT() != null || ctx.GE() != null) {
+                    if (!isIntegerType(lhs.type)) {
+                        Project4SemanticError.unexpectedType(ctx, lhs.type).throwException();
+                    }
+                    if (!isIntegerType(rhs.type)) {
+                        Project4SemanticError.unexpectedType(ctx, rhs.type).throwException();
+                    }
+                    return new ExprInfo(new BasicType(BasicType.Kind.INT), false);
+                }
+
+                // Equality: ==, !=
+                if (ctx.EQ() != null || ctx.NEQ() != null) {
+                    Token op = ctx.EQ() != null ? ctx.EQ().getSymbol() : ctx.NEQ().getSymbol();
+
+                    // Check if both are integers or pointers
+                    if (!isIntegerType(lhs.type) && !isPointerType(lhs.type)) {
+                        Project4SemanticError.unexpectedType(ctx, lhs.type).throwException();
+                    }
+                    if (!isIntegerType(rhs.type) && !isPointerType(rhs.type)) {
+                        Project4SemanticError.unexpectedType(ctx, rhs.type).throwException();
+                    }
+
+                    // Special case: allow 0 as null pointer
+                    boolean lhsIsZero = isConstantZero(ctx.expression(0));
+                    boolean rhsIsZero = isConstantZero(ctx.expression(1));
+
+                    if (!lhsIsZero && !rhsIsZero && !typesEqual(lhs.type, rhs.type)) {
+                        Project4SemanticError.unmatchedTypeForBinaryOP(ctx, op, lhs.type, rhs.type).throwException();
+                    }
+
+                    return new ExprInfo(new BasicType(BasicType.Kind.INT), false);
+                }
+
+                // Logical: &&, ||
+                if (ctx.AND() != null || ctx.OR() != null) {
+                    if (!isIntegerType(lhs.type) && !isPointerType(lhs.type)) {
+                        Project4SemanticError.unexpectedType(ctx, lhs.type).throwException();
+                    }
+                    if (!isIntegerType(rhs.type) && !isPointerType(rhs.type)) {
+                        Project4SemanticError.unexpectedType(ctx, rhs.type).throwException();
+                    }
+                    return new ExprInfo(new BasicType(BasicType.Kind.INT), false);
+                }
+
+                // Assignment: =
+                if (ctx.ASSIGN() != null) {
+                    if (!lhs.isLvalue) {
+                        Project4SemanticError.lvalueRequired(ctx).throwException();
+                    }
+
+                    // Check if lhs or rhs is array type - arrays cannot be assigned
+                    if (lhs.type instanceof ArrayType || rhs.type instanceof ArrayType) {
+                        Project4SemanticError.unmatchedTypeForBinaryOP(ctx, ctx.ASSIGN().getSymbol(), lhs.type, rhs.type).throwException();
+                    }
+
+                    if (!isIntegerType(lhs.type) && !isPointerType(lhs.type)) {
+                        Project4SemanticError.unmatchedTypeForBinaryOP(ctx, ctx.ASSIGN().getSymbol(), lhs.type, rhs.type).throwException();
+                    }
+                    if (!isIntegerType(rhs.type) && !isPointerType(rhs.type)) {
+                        Project4SemanticError.unmatchedTypeForBinaryOP(ctx, ctx.ASSIGN().getSymbol(), lhs.type, rhs.type).throwException();
+                    }
+
+                    // Special case: allow 0 as null pointer
+                    boolean rhsIsZero = isConstantZero(ctx.expression(1));
+
+                    if (!rhsIsZero && !typesEqual(lhs.type, rhs.type)) {
+                        Project4SemanticError.unmatchedTypeForBinaryOP(ctx, ctx.ASSIGN().getSymbol(), lhs.type, rhs.type).throwException();
+                    }
+
+                    return new ExprInfo(rhs.type, false); // Assignment returns rvalue
+                }
+            }
+
+            // Should not reach here - all expression cases should be handled above
+            throw new RuntimeException("Unexpected expression structure in checkExpression");
+        }
+
+        @Override
+        public Type visitExpression(SplcParser.ExpressionContext ctx) {
+            // This should not be used in Project 4, but keep for compatibility
             return null;
         }
 
         // Helper methods
+
+        private boolean isConstantZero(SplcParser.ExpressionContext ctx) {
+            // Check if expression is directly 0 (optionally wrapped in parentheses)
+            if (ctx.Number() != null && ctx.Number().getText().equals("0")) {
+                return true;
+            }
+            // Check if it's parenthesized zero
+            if (ctx.LPAREN() != null && ctx.expression().size() == 1 && ctx.Identifier() == null) {
+                return isConstantZero(ctx.expression(0));
+            }
+            return false;
+        }
+
+        private boolean isIntegerType(Type type) {
+            return type instanceof BasicType && ((BasicType) type).getKind() == BasicType.Kind.INT;
+        }
+
+        private boolean isPointerType(Type type) {
+            return type instanceof PointerType;
+        }
+
+        private boolean typesEqual(Type t1, Type t2) {
+            return t1.equals(t2);
+        }
 
         private String extractIdentifierFromVarDec(SplcParser.VarDecContext ctx) {
             if (ctx.Identifier() != null) {
