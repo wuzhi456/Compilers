@@ -16,7 +16,7 @@ program: globalDef* EOF;
 
 globalDef
     : specifier Identifier LPAREN funcArgs RPAREN LBRACE statement* RBRACE   // function definition
-    | specifier varDec (ASSIGN expression)? (COMMA varDec (ASSIGN expression)?)* SEMI  // global variable definition
+    | specifier varDec (ASSIGN expression)? SEMI                             // global variable definition
     | specifier Identifier LPAREN funcArgs RPAREN SEMI
     | specifier SEMI                                                         // global struct declaration
     ;
@@ -40,12 +40,12 @@ funcArgs
     ;
 
 statement
-    : LBRACE statement* RBRACE                                                              #bracket
-    | specifier varDec (ASSIGN expression)? (COMMA varDec (ASSIGN expression)?)* SEMI       #VarDecStmt
-    | IF LPAREN expression RPAREN statement (ELSE statement)?                               #IfStmt
-    | WHILE LPAREN expression RPAREN statement                                              #WhileStmt
-    | RETURN expression SEMI                                                                #ReturnStmt
-    | expression SEMI                                                                       #ExprStmt
+    : LBRACE statement* RBRACE                                  #bracket
+    | specifier varDec (ASSIGN expression)? SEMI                #VarDecStmt
+    | IF LPAREN expression RPAREN statement (ELSE statement)?   #IfStmt
+    | WHILE LPAREN expression RPAREN statement                  #WhileStmt
+    | RETURN expression SEMI                                    #ReturnStmt
+    | expression SEMI                                           #ExprStmt
     ;
 
 expression
