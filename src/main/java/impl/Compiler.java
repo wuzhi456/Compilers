@@ -1248,11 +1248,12 @@ public class Compiler extends AbstractCompiler {
 
                     // Check if both are integers or pointers
                     if (!isIntegerType(lhs.type) && !isPointerType(lhs.type)) {
-                        Project4SemanticError.unexpectedType(ctx, lhs.type).throwException();
+//                        Project4SemanticError.unexpectedType(ctx, lhs.type).throwException();
+                        Project4SemanticError.unmatchedTypeForBinaryOP(ctx, op, lhs.type, rhs.type).throwException();
                     }
-                    if (!isIntegerType(rhs.type) && !isPointerType(rhs.type)) {
-                        Project4SemanticError.unexpectedType(ctx, rhs.type).throwException();
-                    }
+//                    if (!isIntegerType(rhs.type) && !isPointerType(rhs.type)) {
+//                        Project4SemanticError.unexpectedType(ctx, rhs.type).throwException();
+//                    }
 
                     // Special case: allow 0 as null pointer
                     boolean lhsIsZero = isConstantZero(ctx.expression(0));
