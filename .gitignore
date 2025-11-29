@@ -1,6 +1,7 @@
 ### CS323 Template ###
 #### Ignore generated ####
 src/main/java/generated
+out/
 
 *.tar
 *.tar.gz
