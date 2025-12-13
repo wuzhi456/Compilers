@@ -4,9 +4,6 @@ src/main/java/generated
 project5_testcases/bin
 project5_testcases/ir
 
-# Compiled class files
-out/
-
 *.tar
 *.tar.gz
 .myapi.key
