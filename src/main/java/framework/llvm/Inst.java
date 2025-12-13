@@ -162,7 +162,7 @@ public abstract class Inst {
         @Override
         String toLLVMRep() {
             return switch(type) {
-                case InstType.zext ->  String.format("%s = zext %s %s to %s", result.llvmName(), ty.llvmName(), value.llvmName(), ty2.llvmName());
+                case zext ->  String.format("%s = zext %s %s to %s", result.llvmName(), ty.llvmName(), value.llvmName(), ty2.llvmName());
                 default -> null;
             };
         }
