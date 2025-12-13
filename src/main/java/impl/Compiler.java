@@ -3,6 +3,7 @@ package impl;
 import framework.AbstractCompiler;
 import framework.AbstractGrader;
 import framework.lang.Type;
+import framework.llvm.*;
 import framework.project3.Project3SemanticError;
 import framework.project4.Project4SemanticError;
 import framework.project4.Project4Exception;
@@ -13,6 +14,7 @@ import org.antlr.v4.runtime.CharStream;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.Token;
+import org.antlr.v4.runtime.misc.Pair;
 import org.antlr.v4.runtime.tree.ParseTree;
 import org.antlr.v4.runtime.tree.TerminalNode;
 
@@ -40,18 +42,10 @@ public class Compiler extends AbstractCompiler {
         SemanticAnalyzer analyzer = new SemanticAnalyzer(grader);
         analyzer.visit(program);
 
-        // If we get here, no semantic errors were found (or only Project 4 errors)
-        // Phase 2: Print global variables and functions only if no errors
+        // Phase 2: Generate LLVM IR if no semantic errors
         if (!analyzer.hasSemanticErrors()) {
-            grader.print("Variables:\n");
-            for (Symbol symbol : analyzer.getGlobalVariables()) {
-                grader.print(symbol.getName() + ": " + symbol.getType().fullPrint() + "\n");
-            }
-            grader.print("\n");
-            grader.print("Functions:\n");
-            for (Symbol symbol : analyzer.getGlobalFunctions()) {
-                grader.print(symbol.getName() + ": " + symbol.getType().prettyPrint() + "\n");
-            }
+            IRCodeGenerator codeGen = new IRCodeGenerator(grader);
+            codeGen.generate(program);
         }
     }
 
@@ -1407,6 +1401,1066 @@ public class Compiler extends AbstractCompiler {
             }
             // Direct struct types can be deferred for global variables
             return false;
+        }
+    }
+
+    // ===== LLVM IR Code Generator =====
+
+    private static class IRCodeGenerator extends SplcBaseVisitor<Void> {
+        private final AbstractGrader grader;
+        private final IRBuilder ir;
+        
+        // Symbol info: address + type
+        private static class VarInfo {
+            final IRValue addr;
+            final Type type;
+            VarInfo(IRValue addr, Type type) {
+                this.addr = addr;
+                this.type = type;
+            }
+        }
+        
+        // Symbol table for variables (maps variable names to their info)
+        private final Map<String, VarInfo> globalVariables = new HashMap<>();
+        private final Deque<Map<String, VarInfo>> localScopes = new ArrayDeque<>();
+        
+        // Current function context
+        private FunctionBuilder currentFunction;
+        private BasicBlockBuilder currentBlock;
+        
+        // Struct definitions (maps struct tag to list of (fieldName, fieldType))
+        private final Map<String, List<Pair<String, Type>>> structDefs = new LinkedHashMap<>();
+        
+        // Track struct types for LLVM
+        private final Map<String, List<IRType>> structIRTypes = new HashMap<>();
+
+        public IRCodeGenerator(AbstractGrader grader) {
+            this.grader = grader;
+            this.ir = new IRBuilder();
+        }
+
+        public void generate(SplcParser.ProgramContext program) {
+            // First pass: collect struct definitions and declare all functions
+            for (SplcParser.GlobalDefContext globalDef : program.globalDef()) {
+                preprocessGlobalDef(globalDef);
+            }
+            
+            // Second pass: generate code for all definitions
+            visit(program);
+            
+            // Output the generated IR
+            grader.printIR(ir);
+        }
+
+        // First pass: preprocess to collect struct definitions and declare functions
+        private void preprocessGlobalDef(SplcParser.GlobalDefContext ctx) {
+            Type specType = buildTypeFromSpecifier(ctx.specifier());
+            
+            // Handle struct definition in specifier
+            if (ctx.specifier().STRUCT() != null && ctx.specifier().LBRACE() != null) {
+                String tagName = ctx.specifier().Identifier().getText();
+                List<Pair<String, Type>> members = new ArrayList<>();
+                List<IRType> irMembers = new ArrayList<>();
+                
+                for (int i = 0; i < ctx.specifier().specifier().size(); i++) {
+                    Type memberSpecType = buildTypeFromSpecifier(ctx.specifier().specifier(i));
+                    String memberName = extractIdentifierFromVarDec(ctx.specifier().varDec(i));
+                    Type memberType = buildTypeFromVarDec(ctx.specifier().varDec(i), memberSpecType);
+                    members.add(new Pair<>(memberName, memberType));
+                    irMembers.add(convertTypeToIR(memberType));
+                }
+                
+                structDefs.put(tagName, members);
+                structIRTypes.put(tagName, irMembers);
+                ir.defineStructure(tagName, irMembers);
+            }
+            
+            // Handle function declaration (without body)
+            if (ctx.funcArgs() != null && ctx.SEMI() != null && ctx.LBRACE() == null) {
+                String funcName = ctx.Identifier().getText();
+                List<Pair<String, IRType>> params = new ArrayList<>();
+                
+                if (ctx.funcArgs().specifier() != null && !ctx.funcArgs().specifier().isEmpty()) {
+                    for (int i = 0; i < ctx.funcArgs().specifier().size(); i++) {
+                        Type paramSpecType = buildTypeFromSpecifier(ctx.funcArgs().specifier(i));
+                        Type paramType = buildTypeFromVarDec(ctx.funcArgs().varDec(i), paramSpecType);
+                        String paramName = extractIdentifierFromVarDec(ctx.funcArgs().varDec(i));
+                        params.add(new Pair<>(paramName, convertTypeToIR(paramType)));
+                    }
+                }
+                
+                ir.declareFunction(funcName, convertTypeToIR(specType), params);
+            }
+        }
+
+        @Override
+        public Void visitProgram(SplcParser.ProgramContext ctx) {
+            for (SplcParser.GlobalDefContext globalDef : ctx.globalDef()) {
+                visitGlobalDef(globalDef);
+            }
+            return null;
+        }
+
+        @Override
+        public Void visitGlobalDef(SplcParser.GlobalDefContext ctx) {
+            Type specType = buildTypeFromSpecifier(ctx.specifier());
+            
+            if (ctx.LBRACE() != null) {
+                // Function definition
+                String funcName = ctx.Identifier().getText();
+                List<Pair<String, IRType>> params = new ArrayList<>();
+                List<Pair<String, Type>> paramTypes = new ArrayList<>();
+                
+                if (ctx.funcArgs().specifier() != null && !ctx.funcArgs().specifier().isEmpty()) {
+                    for (int i = 0; i < ctx.funcArgs().specifier().size(); i++) {
+                        Type paramSpecType = buildTypeFromSpecifier(ctx.funcArgs().specifier(i));
+                        Type paramType = buildTypeFromVarDec(ctx.funcArgs().varDec(i), paramSpecType);
+                        String paramName = extractIdentifierFromVarDec(ctx.funcArgs().varDec(i));
+                        params.add(new Pair<>(paramName, convertTypeToIR(paramType)));
+                        paramTypes.add(new Pair<>(paramName, paramType));
+                    }
+                }
+                
+                currentFunction = ir.defineFunction(funcName, convertTypeToIR(specType), params);
+                currentBlock = currentFunction.rootBlock();
+                
+                // Create local scope for function parameters
+                localScopes.push(new HashMap<>());
+                
+                // Add parameters to local scope with their types
+                for (int i = 0; i < paramTypes.size(); i++) {
+                    String paramName = paramTypes.get(i).a;
+                    Type paramType = paramTypes.get(i).b;
+                    IRValue paramAddr = currentFunction.param(paramName);
+                    localScopes.peek().put(paramName, new VarInfo(paramAddr, paramType));
+                }
+                
+                // Visit function body
+                for (SplcParser.StatementContext stmt : ctx.statement()) {
+                    visit(stmt);
+                }
+                
+                // If no return statement was reached, add a default return 0
+                if (!currentBlock.hasTerminated()) {
+                    currentBlock.ret(IRValue.consti32(0));
+                }
+                
+                localScopes.pop();
+                currentFunction = null;
+                currentBlock = null;
+                
+            } else if (ctx.varDec() != null) {
+                // Global variable definition
+                String varName = extractIdentifierFromVarDec(ctx.varDec());
+                Type varType = buildTypeFromVarDec(ctx.varDec(), specType);
+                IRType irType = convertTypeToIR(varType);
+                
+                IRValue globalAddr = ir.defineGlobalVar(varName, irType);
+                globalVariables.put(varName, new VarInfo(globalAddr, varType));
+            }
+            // Skip function declarations (already handled in preprocess) and struct-only declarations
+            
+            return null;
+        }
+
+        @Override
+        public Void visitBracket(SplcParser.BracketContext ctx) {
+            localScopes.push(new HashMap<>());
+            for (SplcParser.StatementContext stmt : ctx.statement()) {
+                visit(stmt);
+            }
+            localScopes.pop();
+            return null;
+        }
+
+        @Override
+        public Void visitVarDecStmt(SplcParser.VarDecStmtContext ctx) {
+            Type specType = buildTypeFromSpecifier(ctx.specifier());
+            String varName = extractIdentifierFromVarDec(ctx.varDec());
+            Type varType = buildTypeFromVarDec(ctx.varDec(), specType);
+            IRType irType = convertTypeToIR(varType);
+            
+            // Allocate local variable
+            IRValue varAddr = currentBlock.alloca(irType, varName);
+            localScopes.peek().put(varName, new VarInfo(varAddr, varType));
+            
+            // Handle initialization
+            if (ctx.expression() != null) {
+                IRValue initValue = generateExpression(ctx.expression());
+                currentBlock.store(varAddr, irType, initValue);
+            }
+            
+            return null;
+        }
+
+        @Override
+        public Void visitIfStmt(SplcParser.IfStmtContext ctx) {
+            // Evaluate condition
+            IRValue cond = generateExpression(ctx.expression());
+            
+            // Ensure condition is i1 (bool)
+            if (!cond.type().isBoolean()) {
+                // Compare with 0 or null to get boolean
+                if (cond.type().isPointer()) {
+                    cond = currentBlock.icmp(cond, LLVMIcmpPredicate.NotEquals, IRValue.constNull(), null);
+                } else {
+                    cond = currentBlock.icmp(cond, LLVMIcmpPredicate.NotEquals, IRValue.consti32(0), null);
+                }
+            }
+            
+            // Create basic blocks
+            BasicBlockBuilder thenBlock = currentFunction.newBasicBlock("if.then");
+            BasicBlockBuilder elseBlock = ctx.statement().size() > 1 ? 
+                currentFunction.newBasicBlock("if.else") : null;
+            BasicBlockBuilder mergeBlock = currentFunction.newBasicBlock("if.end");
+            
+            // Branch based on condition
+            if (elseBlock != null) {
+                currentBlock.condBr(cond, thenBlock, elseBlock);
+            } else {
+                currentBlock.condBr(cond, thenBlock, mergeBlock);
+            }
+            
+            // Generate then block
+            currentBlock = thenBlock;
+            visit(ctx.statement(0));
+            if (!currentBlock.hasTerminated()) {
+                currentBlock.br(mergeBlock);
+            }
+            
+            // Generate else block if present
+            if (elseBlock != null) {
+                currentBlock = elseBlock;
+                visit(ctx.statement(1));
+                if (!currentBlock.hasTerminated()) {
+                    currentBlock.br(mergeBlock);
+                }
+            }
+            
+            // Continue with merge block
+            currentBlock = mergeBlock;
+            
+            return null;
+        }
+
+        @Override
+        public Void visitWhileStmt(SplcParser.WhileStmtContext ctx) {
+            // Create basic blocks
+            BasicBlockBuilder condBlock = currentFunction.newBasicBlock("while.cond");
+            BasicBlockBuilder bodyBlock = currentFunction.newBasicBlock("while.body");
+            BasicBlockBuilder endBlock = currentFunction.newBasicBlock("while.end");
+            
+            // Branch to condition block
+            currentBlock.br(condBlock);
+            
+            // Generate condition block
+            currentBlock = condBlock;
+            IRValue cond = generateExpression(ctx.expression());
+            
+            // Ensure condition is i1 (bool)
+            if (!cond.type().isBoolean()) {
+                if (cond.type().isPointer()) {
+                    cond = currentBlock.icmp(cond, LLVMIcmpPredicate.NotEquals, IRValue.constNull(), null);
+                } else {
+                    cond = currentBlock.icmp(cond, LLVMIcmpPredicate.NotEquals, IRValue.consti32(0), null);
+                }
+            }
+            
+            currentBlock.condBr(cond, bodyBlock, endBlock);
+            
+            // Generate body block
+            currentBlock = bodyBlock;
+            visit(ctx.statement());
+            if (!currentBlock.hasTerminated()) {
+                currentBlock.br(condBlock);
+            }
+            
+            // Continue with end block
+            currentBlock = endBlock;
+            
+            return null;
+        }
+
+        @Override
+        public Void visitReturnStmt(SplcParser.ReturnStmtContext ctx) {
+            IRValue retValue = generateExpression(ctx.expression());
+            currentBlock.ret(retValue);
+            return null;
+        }
+
+        @Override
+        public Void visitExprStmt(SplcParser.ExprStmtContext ctx) {
+            generateExpression(ctx.expression());
+            return null;
+        }
+
+        // ===== Expression Generation =====
+        
+        private IRValue generateExpression(SplcParser.ExpressionContext ctx) {
+            // Identifier
+            if (ctx.Identifier() != null && ctx.LPAREN() == null && ctx.DOT() == null && ctx.ARROW() == null) {
+                String name = ctx.Identifier().getText();
+                IRValue addr = lookupVariable(name);
+                Type varType = lookupVariableType(name);
+                IRType irType = convertTypeToIR(varType);
+                
+                // If it's an array, return the address (arrays decay to pointers)
+                if (varType instanceof ArrayType) {
+                    return addr;
+                }
+                
+                // Load the value
+                return currentBlock.load(addr, irType, null);
+            }
+            
+            // Number
+            if (ctx.Number() != null) {
+                int value = Integer.parseInt(ctx.Number().getText());
+                return IRValue.consti32(value);
+            }
+            
+            // Parenthesized expression
+            if (ctx.LPAREN() != null && ctx.expression().size() == 1 && ctx.Identifier() == null) {
+                return generateExpression(ctx.expression(0));
+            }
+            
+            // Function call
+            if (ctx.Identifier() != null && ctx.LPAREN() != null) {
+                String funcName = ctx.Identifier().getText();
+                List<IRValue> args = new ArrayList<>();
+                
+                for (SplcParser.ExpressionContext argCtx : ctx.expression()) {
+                    args.add(generateExpression(argCtx));
+                }
+                
+                return currentBlock.call(IRType.int32(), funcName, args, null);
+            }
+            
+            // Array access: expression LBRACK expression RBRACK
+            if (ctx.LBRACK() != null) {
+                Type baseType = getExpressionType(ctx.expression(0));
+                IRValue index = generateExpression(ctx.expression(1));
+                
+                IRType elementIRType;
+                IRValue elementAddr;
+                
+                if (baseType instanceof ArrayType) {
+                    // For arrays, we need the address of the array and use 2-index GEP
+                    IRValue baseAddr = generateLvalueAddress(ctx.expression(0));
+                    elementIRType = convertTypeToIR(((ArrayType) baseType).getElementType());
+                    IRType gepType = convertTypeToIR(baseType);
+                    elementAddr = currentBlock.gep(baseAddr, gepType, 0, index, null);
+                } else if (baseType instanceof PointerType) {
+                    // For pointers, evaluate the pointer expression and use 1-index GEP
+                    IRValue ptrValue = generateExpression(ctx.expression(0));
+                    Type referenced = ((PointerType) baseType).getReferencedType();
+                    elementIRType = convertTypeToIR(referenced);
+                    elementAddr = currentBlock.gep(ptrValue, elementIRType, index, null);
+                } else {
+                    throw new RuntimeException("Array access on non-array, non-pointer type");
+                }
+                
+                return currentBlock.load(elementAddr, elementIRType, null);
+            }
+            
+            // Struct member access: expression DOT Identifier
+            if (ctx.DOT() != null) {
+                IRValue structAddr = generateLvalueAddress(ctx.expression(0));
+                String memberName = ctx.Identifier().getText();
+                Type structType = getExpressionType(ctx.expression(0));
+                
+                if (!(structType instanceof StructType)) {
+                    throw new RuntimeException("DOT access on non-struct type");
+                }
+                
+                StructType st = (StructType) structType;
+                int memberIndex = getMemberIndex(st.getTag(), memberName);
+                Type memberType = getMemberType(st.getTag(), memberName);
+                IRType irStructType = IRType.structure(st.getTag());
+                IRType memberIRType = convertTypeToIR(memberType);
+                
+                IRValue memberAddr = currentBlock.gep(structAddr, irStructType, 0, IRValue.consti32(memberIndex), null);
+                return currentBlock.load(memberAddr, memberIRType, null);
+            }
+            
+            // Pointer member access: expression ARROW Identifier  
+            if (ctx.ARROW() != null) {
+                IRValue ptrValue = generateExpression(ctx.expression(0));
+                String memberName = ctx.Identifier().getText();
+                Type ptrType = getExpressionType(ctx.expression(0));
+                
+                if (!(ptrType instanceof PointerType)) {
+                    throw new RuntimeException("ARROW access on non-pointer type");
+                }
+                
+                Type referencedType = ((PointerType) ptrType).getReferencedType();
+                if (!(referencedType instanceof StructType)) {
+                    throw new RuntimeException("ARROW access on non-struct pointer");
+                }
+                
+                StructType st = (StructType) referencedType;
+                int memberIndex = getMemberIndex(st.getTag(), memberName);
+                Type memberType = getMemberType(st.getTag(), memberName);
+                IRType irStructType = IRType.structure(st.getTag());
+                IRType memberIRType = convertTypeToIR(memberType);
+                
+                IRValue memberAddr = currentBlock.gep(ptrValue, irStructType, 0, IRValue.consti32(memberIndex), null);
+                return currentBlock.load(memberAddr, memberIRType, null);
+            }
+            
+            // Postfix increment/decrement
+            if ((ctx.INC() != null || ctx.DEC() != null) && ctx.expression().size() == 1) {
+                // Check if it's postfix (expression comes before operator)
+                if (isPostfixOp(ctx)) {
+                    IRValue addr = generateLvalueAddress(ctx.expression(0));
+                    Type varType = getExpressionType(ctx.expression(0));
+                    IRType irType = convertTypeToIR(varType);
+                    
+                    IRValue oldValue = currentBlock.load(addr, irType, null);
+                    IRValue one = IRValue.consti32(1);
+                    
+                    IRValue newValue;
+                    if (varType instanceof PointerType) {
+                        Type ptrElemType = ((PointerType) varType).getReferencedType();
+                        IRType ptrElemIRType = convertTypeToIR(ptrElemType);
+                        IRValue offset = ctx.INC() != null ? one : currentBlock.sub(IRValue.consti32(0), one, null);
+                        newValue = currentBlock.gep(oldValue, ptrElemIRType, offset, null);
+                    } else {
+                        newValue = ctx.INC() != null ? 
+                            currentBlock.add(oldValue, one, null) :
+                            currentBlock.sub(oldValue, one, null);
+                    }
+                    
+                    currentBlock.store(addr, irType, newValue);
+                    return oldValue;
+                } else {
+                    // Prefix increment/decrement
+                    IRValue addr = generateLvalueAddress(ctx.expression(0));
+                    Type varType = getExpressionType(ctx.expression(0));
+                    IRType irType = convertTypeToIR(varType);
+                    
+                    IRValue oldValue = currentBlock.load(addr, irType, null);
+                    IRValue one = IRValue.consti32(1);
+                    
+                    IRValue newValue;
+                    if (varType instanceof PointerType) {
+                        Type ptrElemType = ((PointerType) varType).getReferencedType();
+                        IRType ptrElemIRType = convertTypeToIR(ptrElemType);
+                        IRValue offset = ctx.INC() != null ? one : currentBlock.sub(IRValue.consti32(0), one, null);
+                        newValue = currentBlock.gep(oldValue, ptrElemIRType, offset, null);
+                    } else {
+                        newValue = ctx.INC() != null ? 
+                            currentBlock.add(oldValue, one, null) :
+                            currentBlock.sub(oldValue, one, null);
+                    }
+                    
+                    currentBlock.store(addr, irType, newValue);
+                    return newValue;
+                }
+            }
+            
+            // Unary operators (prefix)
+            if (ctx.expression().size() == 1) {
+                // Unary plus
+                if (ctx.PLUS() != null) {
+                    return generateExpression(ctx.expression(0));
+                }
+                
+                // Unary minus  
+                if (ctx.MINUS() != null) {
+                    IRValue operand = generateExpression(ctx.expression(0));
+                    return currentBlock.sub(IRValue.consti32(0), operand, null);
+                }
+                
+                // Logical NOT
+                if (ctx.NOT() != null) {
+                    IRValue operand = generateExpression(ctx.expression(0));
+                    IRValue cmp;
+                    if (operand.type().isBoolean()) {
+                        cmp = currentBlock.icmp(operand, LLVMIcmpPredicate.Equals, IRValue.constFalse(), null);
+                    } else if (operand.type().isPointer()) {
+                        cmp = currentBlock.icmp(operand, LLVMIcmpPredicate.Equals, IRValue.constNull(), null);
+                    } else {
+                        cmp = currentBlock.icmp(operand, LLVMIcmpPredicate.Equals, IRValue.consti32(0), null);
+                    }
+                    return currentBlock.zext(cmp, IRType.int32(), null);
+                }
+                
+                // Dereference
+                if (ctx.STAR() != null) {
+                    IRValue ptrValue = generateExpression(ctx.expression(0));
+                    Type ptrType = getExpressionType(ctx.expression(0));
+                    
+                    if (!(ptrType instanceof PointerType)) {
+                        throw new RuntimeException("Dereference on non-pointer");
+                    }
+                    
+                    Type referencedType = ((PointerType) ptrType).getReferencedType();
+                    IRType irType = convertTypeToIR(referencedType);
+                    
+                    return currentBlock.load(ptrValue, irType, null);
+                }
+                
+                // Address-of
+                if (ctx.AMP() != null) {
+                    return generateLvalueAddress(ctx.expression(0));
+                }
+            }
+            
+            // Binary operators
+            if (ctx.expression().size() == 2) {
+                // Assignment
+                if (ctx.ASSIGN() != null) {
+                    IRValue addr = generateLvalueAddress(ctx.expression(0));
+                    Type lhsType = getExpressionType(ctx.expression(0));
+                    IRType irType = convertTypeToIR(lhsType);
+                    IRValue value = generateExpression(ctx.expression(1));
+                    
+                    // Handle null pointer assignment (0 to pointer)
+                    if (irType.isPointer() && value.type().isInteger()) {
+                        // Check if rhs is constant 0
+                        if (isConstantZero(ctx.expression(1))) {
+                            value = IRValue.constNull();
+                        }
+                    }
+                    
+                    currentBlock.store(addr, irType, value);
+                    return value;
+                }
+                
+                // Logical AND (short-circuit)
+                if (ctx.AND() != null) {
+                    return generateShortCircuitAnd(ctx);
+                }
+                
+                // Logical OR (short-circuit)
+                if (ctx.OR() != null) {
+                    return generateShortCircuitOr(ctx);
+                }
+                
+                IRValue lhs = generateExpression(ctx.expression(0));
+                IRValue rhs = generateExpression(ctx.expression(1));
+                
+                // Arithmetic: *, /, %
+                if (ctx.STAR() != null) {
+                    return currentBlock.mul(lhs, rhs, null);
+                }
+                if (ctx.DIV() != null) {
+                    return currentBlock.div(lhs, rhs, null);
+                }
+                if (ctx.MOD() != null) {
+                    return currentBlock.rem(lhs, rhs, null);
+                }
+                
+                // Addition/Subtraction (including pointer arithmetic)
+                if (ctx.PLUS() != null) {
+                    Type lhsType = getExpressionType(ctx.expression(0));
+                    Type rhsType = getExpressionType(ctx.expression(1));
+                    
+                    if (lhsType instanceof PointerType && isIntegerType(rhsType)) {
+                        // Pointer + integer
+                        Type ptrElemType = ((PointerType) lhsType).getReferencedType();
+                        IRType ptrElemIRType = convertTypeToIR(ptrElemType);
+                        return currentBlock.gep(lhs, ptrElemIRType, rhs, null);
+                    } else if (isIntegerType(lhsType) && rhsType instanceof PointerType) {
+                        // Integer + pointer
+                        Type ptrElemType = ((PointerType) rhsType).getReferencedType();
+                        IRType ptrElemIRType = convertTypeToIR(ptrElemType);
+                        return currentBlock.gep(rhs, ptrElemIRType, lhs, null);
+                    }
+                    return currentBlock.add(lhs, rhs, null);
+                }
+                if (ctx.MINUS() != null) {
+                    Type lhsType = getExpressionType(ctx.expression(0));
+                    Type rhsType = getExpressionType(ctx.expression(1));
+                    
+                    if (lhsType instanceof PointerType && isIntegerType(rhsType)) {
+                        // Pointer - integer
+                        Type ptrElemType = ((PointerType) lhsType).getReferencedType();
+                        IRType ptrElemIRType = convertTypeToIR(ptrElemType);
+                        IRValue negRhs = currentBlock.sub(IRValue.consti32(0), rhs, null);
+                        return currentBlock.gep(lhs, ptrElemIRType, negRhs, null);
+                    }
+                    return currentBlock.sub(lhs, rhs, null);
+                }
+                
+                // Comparison operators
+                LLVMIcmpPredicate pred = null;
+                if (ctx.LT() != null) pred = LLVMIcmpPredicate.SignedLT;
+                if (ctx.LE() != null) pred = LLVMIcmpPredicate.SignedLE;
+                if (ctx.GT() != null) pred = LLVMIcmpPredicate.SignedGT;
+                if (ctx.GE() != null) pred = LLVMIcmpPredicate.SignedGE;
+                if (ctx.EQ() != null) pred = LLVMIcmpPredicate.Equals;
+                if (ctx.NEQ() != null) pred = LLVMIcmpPredicate.NotEquals;
+                
+                if (pred != null) {
+                    // Handle pointer-to-null comparisons
+                    Type lhsType = getExpressionType(ctx.expression(0));
+                    Type rhsType = getExpressionType(ctx.expression(1));
+                    
+                    // If one side is a pointer and the other is 0, convert 0 to null
+                    if (lhsType instanceof PointerType && isConstantZero(ctx.expression(1))) {
+                        rhs = IRValue.constNull();
+                    } else if (rhsType instanceof PointerType && isConstantZero(ctx.expression(0))) {
+                        lhs = IRValue.constNull();
+                    }
+                    
+                    IRValue cmp = currentBlock.icmp(lhs, pred, rhs, null);
+                    return currentBlock.zext(cmp, IRType.int32(), null);
+                }
+            }
+            
+            throw new RuntimeException("Unsupported expression: " + ctx.getText());
+        }
+        
+        private IRValue generateShortCircuitAnd(SplcParser.ExpressionContext ctx) {
+            // Short-circuit AND: if lhs is false, return 0 without evaluating rhs
+            // We use alloca to store the result since we don't have phi
+            IRValue resultAddr = currentBlock.alloca(IRType.int32(), "and.result");
+            
+            // Initialize result to 0 (the short-circuit result)
+            currentBlock.store(resultAddr, IRType.int32(), IRValue.consti32(0));
+            
+            BasicBlockBuilder rhsBlock = currentFunction.newBasicBlock("and.rhs");
+            BasicBlockBuilder endBlock = currentFunction.newBasicBlock("and.end");
+            
+            // Evaluate lhs
+            IRValue lhs = generateExpression(ctx.expression(0));
+            IRValue lhsBool;
+            if (lhs.type().isBoolean()) {
+                lhsBool = lhs;
+            } else if (lhs.type().isPointer()) {
+                lhsBool = currentBlock.icmp(lhs, LLVMIcmpPredicate.NotEquals, IRValue.constNull(), null);
+            } else {
+                lhsBool = currentBlock.icmp(lhs, LLVMIcmpPredicate.NotEquals, IRValue.consti32(0), null);
+            }
+            
+            // If lhs is true, evaluate rhs; if false, skip to end (result is already 0)
+            currentBlock.condBr(lhsBool, rhsBlock, endBlock);
+            
+            // Evaluate rhs (if we get here, lhs was true)
+            currentBlock = rhsBlock;
+            IRValue rhs = generateExpression(ctx.expression(1));
+            IRValue rhsBool;
+            if (rhs.type().isBoolean()) {
+                rhsBool = rhs;
+            } else if (rhs.type().isPointer()) {
+                rhsBool = currentBlock.icmp(rhs, LLVMIcmpPredicate.NotEquals, IRValue.constNull(), null);
+            } else {
+                rhsBool = currentBlock.icmp(rhs, LLVMIcmpPredicate.NotEquals, IRValue.consti32(0), null);
+            }
+            IRValue rhsResult = currentBlock.zext(rhsBool, IRType.int32(), null);
+            currentBlock.store(resultAddr, IRType.int32(), rhsResult);
+            currentBlock.br(endBlock);
+            
+            currentBlock = endBlock;
+            return currentBlock.load(resultAddr, IRType.int32(), null);
+        }
+        
+        private IRValue generateShortCircuitOr(SplcParser.ExpressionContext ctx) {
+            // Short-circuit OR: if lhs is true, return 1 without evaluating rhs
+            // We use alloca to store the result
+            IRValue resultAddr = currentBlock.alloca(IRType.int32(), "or.result");
+            
+            // Initialize result to 1 (the short-circuit result)
+            currentBlock.store(resultAddr, IRType.int32(), IRValue.consti32(1));
+            
+            BasicBlockBuilder rhsBlock = currentFunction.newBasicBlock("or.rhs");
+            BasicBlockBuilder endBlock = currentFunction.newBasicBlock("or.end");
+            
+            // Evaluate lhs
+            IRValue lhs = generateExpression(ctx.expression(0));
+            IRValue lhsBool;
+            if (lhs.type().isBoolean()) {
+                lhsBool = lhs;
+            } else if (lhs.type().isPointer()) {
+                lhsBool = currentBlock.icmp(lhs, LLVMIcmpPredicate.NotEquals, IRValue.constNull(), null);
+            } else {
+                lhsBool = currentBlock.icmp(lhs, LLVMIcmpPredicate.NotEquals, IRValue.consti32(0), null);
+            }
+            
+            // If lhs is true, skip to end (result is already 1); if false, evaluate rhs
+            currentBlock.condBr(lhsBool, endBlock, rhsBlock);
+            
+            // Evaluate rhs (if we get here, lhs was false)
+            currentBlock = rhsBlock;
+            IRValue rhs = generateExpression(ctx.expression(1));
+            IRValue rhsBool;
+            if (rhs.type().isBoolean()) {
+                rhsBool = rhs;
+            } else if (rhs.type().isPointer()) {
+                rhsBool = currentBlock.icmp(rhs, LLVMIcmpPredicate.NotEquals, IRValue.constNull(), null);
+            } else {
+                rhsBool = currentBlock.icmp(rhs, LLVMIcmpPredicate.NotEquals, IRValue.consti32(0), null);
+            }
+            IRValue rhsResult = currentBlock.zext(rhsBool, IRType.int32(), null);
+            currentBlock.store(resultAddr, IRType.int32(), rhsResult);
+            currentBlock.br(endBlock);
+            
+            currentBlock = endBlock;
+            return currentBlock.load(resultAddr, IRType.int32(), null);
+        }
+        
+        // Generate address of an lvalue expression
+        private IRValue generateLvalueAddress(SplcParser.ExpressionContext ctx) {
+            // Identifier
+            if (ctx.Identifier() != null && ctx.LPAREN() == null && ctx.DOT() == null && ctx.ARROW() == null) {
+                return lookupVariable(ctx.Identifier().getText());
+            }
+            
+            // Parenthesized expression
+            if (ctx.LPAREN() != null && ctx.expression().size() == 1 && ctx.Identifier() == null) {
+                return generateLvalueAddress(ctx.expression(0));
+            }
+            
+            // Array access
+            if (ctx.LBRACK() != null) {
+                Type baseType = getExpressionType(ctx.expression(0));
+                
+                if (baseType instanceof ArrayType) {
+                    // For arrays, we need the address of the array and use 2-index GEP
+                    IRValue baseAddr = generateLvalueAddress(ctx.expression(0));
+                    IRValue index = generateExpression(ctx.expression(1));
+                    IRType gepType = convertTypeToIR(baseType);
+                    return currentBlock.gep(baseAddr, gepType, 0, index, null);
+                } else if (baseType instanceof PointerType) {
+                    // For pointers, evaluate the pointer expression and use 1-index GEP
+                    IRValue ptrValue = generateExpression(ctx.expression(0));
+                    IRValue index = generateExpression(ctx.expression(1));
+                    Type referenced = ((PointerType) baseType).getReferencedType();
+                    IRType elementIRType = convertTypeToIR(referenced);
+                    return currentBlock.gep(ptrValue, elementIRType, index, null);
+                }
+                
+                throw new RuntimeException("Array access on non-array, non-pointer");
+            }
+            
+            // Struct member access
+            if (ctx.DOT() != null) {
+                IRValue structAddr = generateLvalueAddress(ctx.expression(0));
+                String memberName = ctx.Identifier().getText();
+                Type structType = getExpressionType(ctx.expression(0));
+                
+                if (!(structType instanceof StructType)) {
+                    throw new RuntimeException("DOT access on non-struct");
+                }
+                
+                StructType st = (StructType) structType;
+                int memberIndex = getMemberIndex(st.getTag(), memberName);
+                IRType irStructType = IRType.structure(st.getTag());
+                
+                return currentBlock.gep(structAddr, irStructType, 0, IRValue.consti32(memberIndex), null);
+            }
+            
+            // Pointer member access
+            if (ctx.ARROW() != null) {
+                IRValue ptrValue = generateExpression(ctx.expression(0));
+                String memberName = ctx.Identifier().getText();
+                Type ptrType = getExpressionType(ctx.expression(0));
+                
+                if (!(ptrType instanceof PointerType)) {
+                    throw new RuntimeException("ARROW access on non-pointer");
+                }
+                
+                Type referencedType = ((PointerType) ptrType).getReferencedType();
+                if (!(referencedType instanceof StructType)) {
+                    throw new RuntimeException("ARROW access on non-struct pointer");
+                }
+                
+                StructType st = (StructType) referencedType;
+                int memberIndex = getMemberIndex(st.getTag(), memberName);
+                IRType irStructType = IRType.structure(st.getTag());
+                
+                return currentBlock.gep(ptrValue, irStructType, 0, IRValue.consti32(memberIndex), null);
+            }
+            
+            // Dereference
+            if (ctx.STAR() != null && ctx.expression().size() == 1) {
+                return generateExpression(ctx.expression(0));
+            }
+            
+            throw new RuntimeException("Cannot get address of expression: " + ctx.getText());
+        }
+        
+        // ===== Helper Methods =====
+        
+        private boolean isPostfixOp(SplcParser.ExpressionContext ctx) {
+            // In postfix, the operator comes after the expression
+            // We can check by looking at token positions
+            if (ctx.expression().size() != 1) return false;
+            if (ctx.INC() == null && ctx.DEC() == null) return false;
+            
+            int exprStart = ctx.expression(0).getStart().getStartIndex();
+            int opStart = ctx.INC() != null ? 
+                ctx.INC().getSymbol().getStartIndex() : 
+                ctx.DEC().getSymbol().getStartIndex();
+            
+            return opStart > exprStart;
+        }
+        
+        private boolean isConstantZero(SplcParser.ExpressionContext ctx) {
+            // Check if expression is directly 0 (optionally wrapped in parentheses)
+            if (ctx.Number() != null && ctx.Number().getText().equals("0")) {
+                return true;
+            }
+            // Check if it's parenthesized zero
+            if (ctx.LPAREN() != null && ctx.expression().size() == 1 && ctx.Identifier() == null) {
+                return isConstantZero(ctx.expression(0));
+            }
+            return false;
+        }
+        
+        private IRValue lookupVariable(String name) {
+            // Check local scopes first (from innermost to outermost)
+            for (Map<String, VarInfo> scope : localScopes) {
+                if (scope.containsKey(name)) {
+                    return scope.get(name).addr;
+                }
+            }
+            
+            // Check global variables
+            if (globalVariables.containsKey(name)) {
+                return globalVariables.get(name).addr;
+            }
+            
+            throw new RuntimeException("Variable not found: " + name);
+        }
+        
+        // Get the type of a variable
+        private Type lookupVariableType(String name) {
+            // Check local scopes first (from innermost to outermost)
+            for (Map<String, VarInfo> scope : localScopes) {
+                if (scope.containsKey(name)) {
+                    return scope.get(name).type;
+                }
+            }
+            
+            // Check global variables
+            if (globalVariables.containsKey(name)) {
+                return globalVariables.get(name).type;
+            }
+            
+            return new BasicType(BasicType.Kind.INT);  // Fallback
+        }
+        
+        // Get the type of an expression (simplified implementation)
+        private Type getExpressionType(SplcParser.ExpressionContext ctx) {
+            return getExpressionTypeImpl(ctx);
+        }
+        
+        private Type getExpressionTypeImpl(SplcParser.ExpressionContext ctx) {
+            // Identifier
+            if (ctx.Identifier() != null && ctx.LPAREN() == null && ctx.DOT() == null && ctx.ARROW() == null) {
+                return lookupVariableType(ctx.Identifier().getText());
+            }
+            
+            // Number
+            if (ctx.Number() != null) {
+                return new BasicType(BasicType.Kind.INT);
+            }
+            
+            // Parenthesized
+            if (ctx.LPAREN() != null && ctx.expression().size() == 1 && ctx.Identifier() == null) {
+                return getExpressionTypeImpl(ctx.expression(0));
+            }
+            
+            // Function call
+            if (ctx.Identifier() != null && ctx.LPAREN() != null) {
+                return new BasicType(BasicType.Kind.INT); // All functions return int per project spec
+            }
+            
+            // Array access
+            if (ctx.LBRACK() != null) {
+                Type baseType = getExpressionTypeImpl(ctx.expression(0));
+                if (baseType instanceof ArrayType) {
+                    return ((ArrayType) baseType).getElementType();
+                } else if (baseType instanceof PointerType) {
+                    return ((PointerType) baseType).getReferencedType();
+                }
+            }
+            
+            // Struct member access
+            if (ctx.DOT() != null) {
+                Type structType = getExpressionTypeImpl(ctx.expression(0));
+                if (structType instanceof StructType) {
+                    String memberName = ctx.Identifier().getText();
+                    return getMemberType(((StructType) structType).getTag(), memberName);
+                }
+            }
+            
+            // Pointer member access
+            if (ctx.ARROW() != null) {
+                Type ptrType = getExpressionTypeImpl(ctx.expression(0));
+                if (ptrType instanceof PointerType) {
+                    Type referencedType = ((PointerType) ptrType).getReferencedType();
+                    if (referencedType instanceof StructType) {
+                        String memberName = ctx.Identifier().getText();
+                        return getMemberType(((StructType) referencedType).getTag(), memberName);
+                    }
+                }
+            }
+            
+            // Increment/decrement
+            if (ctx.INC() != null || ctx.DEC() != null) {
+                return getExpressionTypeImpl(ctx.expression(0));
+            }
+            
+            // Unary operators
+            if (ctx.expression().size() == 1) {
+                if (ctx.PLUS() != null || ctx.MINUS() != null || ctx.NOT() != null) {
+                    return new BasicType(BasicType.Kind.INT);
+                }
+                if (ctx.STAR() != null) {
+                    Type ptrType = getExpressionTypeImpl(ctx.expression(0));
+                    if (ptrType instanceof PointerType) {
+                        return ((PointerType) ptrType).getReferencedType();
+                    }
+                }
+                if (ctx.AMP() != null) {
+                    return new PointerType(getExpressionTypeImpl(ctx.expression(0)));
+                }
+            }
+            
+            // Binary operators
+            if (ctx.expression().size() == 2) {
+                if (ctx.ASSIGN() != null) {
+                    return getExpressionTypeImpl(ctx.expression(0));
+                }
+                if (ctx.PLUS() != null || ctx.MINUS() != null) {
+                    Type lhsType = getExpressionTypeImpl(ctx.expression(0));
+                    Type rhsType = getExpressionTypeImpl(ctx.expression(1));
+                    if (lhsType instanceof PointerType) return lhsType;
+                    if (rhsType instanceof PointerType) return rhsType;
+                    return new BasicType(BasicType.Kind.INT);
+                }
+                // All other binary ops return int
+                return new BasicType(BasicType.Kind.INT);
+            }
+            
+            return new BasicType(BasicType.Kind.INT);
+        }
+        
+        private int getMemberIndex(String structTag, String memberName) {
+            List<Pair<String, Type>> members = structDefs.get(structTag);
+            if (members == null) return 0;
+            for (int i = 0; i < members.size(); i++) {
+                if (members.get(i).a.equals(memberName)) {
+                    return i;
+                }
+            }
+            return 0;
+        }
+        
+        private Type getMemberType(String structTag, String memberName) {
+            List<Pair<String, Type>> members = structDefs.get(structTag);
+            if (members == null) return new BasicType(BasicType.Kind.INT);
+            for (Pair<String, Type> member : members) {
+                if (member.a.equals(memberName)) {
+                    return member.b;
+                }
+            }
+            return new BasicType(BasicType.Kind.INT);
+        }
+        
+        private boolean isIntegerType(Type type) {
+            return type instanceof BasicType && ((BasicType) type).getKind() == BasicType.Kind.INT;
+        }
+        
+        // ===== Type Conversion =====
+        
+        private IRType convertTypeToIR(Type type) {
+            if (type instanceof BasicType) {
+                BasicType.Kind kind = ((BasicType) type).getKind();
+                if (kind == BasicType.Kind.INT) {
+                    return IRType.int32();
+                }
+                // CHAR not supported per project spec
+                return IRType.int32();
+            } else if (type instanceof ArrayType) {
+                ArrayType arr = (ArrayType) type;
+                IRType elemType = convertTypeToIR(arr.getElementType());
+                // Build array type with proper dimensions
+                return buildArrayIRType(arr);
+            } else if (type instanceof PointerType) {
+                return IRType.pointer();
+            } else if (type instanceof StructType) {
+                return IRType.structure(((StructType) type).getTag());
+            }
+            return IRType.int32();
+        }
+        
+        private IRType buildArrayIRType(ArrayType arr) {
+            // Collect all dimensions
+            List<Integer> dims = new ArrayList<>();
+            Type current = arr;
+            while (current instanceof ArrayType) {
+                dims.add(((ArrayType) current).getLength());
+                current = ((ArrayType) current).getElementType();
+            }
+            IRType elemType = convertTypeToIR(current);
+            int[] dimArray = new int[dims.size()];
+            for (int i = 0; i < dims.size(); i++) {
+                dimArray[i] = dims.get(i);
+            }
+            return IRType.array(elemType, dimArray);
+        }
+        
+        // ===== Type Building from AST =====
+        
+        private Type buildTypeFromSpecifier(SplcParser.SpecifierContext ctx) {
+            if (ctx.INT() != null) {
+                return new BasicType(BasicType.Kind.INT);
+            } else if (ctx.STRUCT() != null) {
+                String tagName = ctx.Identifier().getText();
+                if (ctx.LBRACE() != null) {
+                    // Complete struct - build the type with members
+                    List<StructType.Member> members = new ArrayList<>();
+                    for (int i = 0; i < ctx.specifier().size(); i++) {
+                        Type memberSpecType = buildTypeFromSpecifier(ctx.specifier(i));
+                        String memberName = extractIdentifierFromVarDec(ctx.varDec(i));
+                        Type memberType = buildTypeFromVarDec(ctx.varDec(i), memberSpecType);
+                        members.add(new StructType.Member(memberType, memberName));
+                    }
+                    return new StructType(tagName, members);
+                } else {
+                    // Reference to existing struct
+                    List<Pair<String, Type>> existingMembers = structDefs.get(tagName);
+                    if (existingMembers != null) {
+                        List<StructType.Member> members = new ArrayList<>();
+                        for (Pair<String, Type> m : existingMembers) {
+                            members.add(new StructType.Member(m.b, m.a));
+                        }
+                        return new StructType(tagName, members);
+                    }
+                    return new StructType(tagName, false);
+                }
+            }
+            return new BasicType(BasicType.Kind.INT);
+        }
+        
+        private String extractIdentifierFromVarDec(SplcParser.VarDecContext ctx) {
+            if (ctx.Identifier() != null) {
+                return ctx.Identifier().getText();
+            } else if (ctx.varDec() != null) {
+                return extractIdentifierFromVarDec(ctx.varDec());
+            }
+            return null;
+        }
+        
+        private Type buildTypeFromVarDec(SplcParser.VarDecContext ctx, Type baseType) {
+            if (ctx.Identifier() != null) {
+                return baseType;
+            } else if (ctx.LPAREN() != null && ctx.varDec() != null) {
+                return buildTypeFromVarDec(ctx.varDec(), baseType);
+            } else if (ctx.LBRACK() != null) {
+                int arraySize = Integer.parseInt(ctx.Number().getText());
+                Type arrayType = new ArrayType(baseType, arraySize);
+                return buildTypeFromVarDec(ctx.varDec(), arrayType);
+            } else if (ctx.STAR() != null) {
+                Type pointerType = new PointerType(baseType);
+                return buildTypeFromVarDec(ctx.varDec(), pointerType);
+            }
+            return baseType;
         }
     }
 }

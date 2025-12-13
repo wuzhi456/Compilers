@@ -1,0 +1,34 @@
+int readint();
+int writeint(int out);
+int setseed(int seed);
+int getrand();
+int assert_eq(int where, int given, int expected);
+
+// Test 102: Fibonacci and control flow
+int fib(int n) {
+    if (n <= 0) return 0;
+    if (n == 1) return 1;
+    
+    int a = 0;
+    int b = 1;
+    int i = 2;
+    while (i <= n) {
+        int c = a + b;
+        a = b;
+        b = c;
+        i = i + 1;
+    }
+    return b;
+}
+
+int main0() {
+    int count = readint();
+    int i = 0;
+    while (i < count) {
+        int n = readint();
+        int result = fib(n);
+        writeint(result);
+        i = i + 1;
+    }
+    return 0;
+}
