@@ -2,6 +2,7 @@ package framework.llvm;
 
 import org.antlr.v4.runtime.misc.Pair;
 
+//import java.util.List;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -98,7 +99,7 @@ public class FunctionBuilder {
                 throw new RuntimeException("Every basic block must be terminated.");
             sb.append(bbb.print());
             if (!bbb.instructions.isEmpty()) {
-                var lastIns = bbb.instructions.getLast();
+                var lastIns = bbb.instructions.get(bbb.instructions.size() - 1);
                 if (lastIns instanceof Inst.TermInst termInst) {
                     if (termInst.type.equals(Inst.InstType.condBr)) {
                         queue.offer(this.blocks.get(termInst.label1));

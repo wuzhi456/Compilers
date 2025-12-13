@@ -5,49 +5,12 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="ba20fe1f-c0d1-47b7-9f89-0d1c8d818107" name="更改" comment="">
-      <change afterPath="$PROJECT_DIR$/project5_testcases/Makefile" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/check_testcases.sh" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/splc_crt.c" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/test01/01.in" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/test01/01.out" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/test01/splc.c" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/test02/01.in" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/test02/01.out" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/test02/splc.c" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/test03/01.in" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/test03/01.out" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/test03/splc.c" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/test04/01.in" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/test04/01.out" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/test04/splc.c" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/test05/01.in" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/test05/01.out" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/test05/splc.c" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/project5_testcases/testir.sh" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/main/java/framework/llvm/BasicBlockBuilder.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/main/java/framework/llvm/FunctionBuilder.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/main/java/framework/llvm/IRBuilder.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/main/java/framework/llvm/IRType.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/main/java/framework/llvm/IRValue.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/main/java/framework/llvm/Inst.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/main/java/framework/llvm/LLVMIcmpPredicate.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/main/java/framework/project5/Grader.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/testcases/project4/base_17.splc" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/testcases/project4/base_17.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/testcases/project4/base_20.splc" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/testcases/project4/base_20.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/testcases/project4/ext2_03.splc" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/testcases/project4/ext2_03.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/testcases/project5/test01.splc" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/testcases/project5/test02.splc" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/testcases/project5/test03.splc" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/testcases/project5/test04.splc" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/conf/proj.mk" beforeDir="false" afterPath="$PROJECT_DIR$/conf/proj.mk" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/main/java/Main.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/Main.java" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/main/java/framework/AbstractGrader.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/framework/AbstractGrader.java" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/main/java/framework/Utils.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/framework/Utils.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/Main.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/framework/AbstractGrader.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/framework/AbstractGrader.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/framework/Utils.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/framework/project3/Grader.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/framework/llvm/FunctionBuilder.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/framework/llvm/FunctionBuilder.java" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -76,18 +39,18 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "RunOnceActivity.OpenProjectViewOnStart": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "git-widget-placeholder": "正在合并 my-project5",
-    "last_opened_file_path": "/Users/wuzhi/Desktop/MyProgram/CS323-Compilers-2025F-Projects/src/main/java",
-    "project.structure.last.edited": "项目",
-    "project.structure.proportion": "0.0",
-    "project.structure.side.proportion": "0.2",
-    "settings.editor.selected.configurable": "preferences.keymap"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;RunOnceActivity.OpenProjectViewOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;my-project5&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/Users/wuzhi/Desktop/MyProgram/CS323-Compilers-2025F-Projects/src/main/java&quot;,
+    &quot;project.structure.last.edited&quot;: &quot;SDK&quot;,
+    &quot;project.structure.proportion&quot;: &quot;0.0&quot;,
+    &quot;project.structure.side.proportion&quot;: &quot;0.2&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.pluginManager&quot;
   }
-}]]></component>
+}</component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$/src/main/java" />
