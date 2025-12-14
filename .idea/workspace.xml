@@ -6,11 +6,22 @@
   <component name="ChangeListManager">
     <list default="true" id="ba20fe1f-c0d1-47b7-9f89-0d1c8d818107" name="更改" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/Main.class" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/framework/AbstractGrader.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/framework/AbstractGrader.class" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/framework/Utils.class" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/framework/project3/Grader.class" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/main/java/framework/llvm/FunctionBuilder.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/framework/llvm/FunctionBuilder.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$ArrayType.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$ArrayType.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$BasicType$Kind.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$BasicType$Kind.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$BasicType.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$BasicType.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$ExprInfo.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$ExprInfo.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$FunctionType.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$FunctionType.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$PointerType.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$PointerType.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$SemanticAnalyzer.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$SemanticAnalyzer.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$StructType$Member.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$StructType$Member.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$StructType.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$StructType.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$Symbol$Kind.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$Symbol$Kind.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$Symbol.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$Symbol.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$SymbolTable.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$SymbolTable.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/Main.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/Main.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/framework/llvm/Inst.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/framework/llvm/Inst.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/impl/Compiler.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/impl/Compiler.java" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -65,20 +76,20 @@
         <option name="Make" enabled="true" />
       </method>
     </configuration>
-    <configuration name="$(GRAMMARS)" type="MAKEFILE_TARGET_RUN_CONFIGURATION" factoryName="Makefile" temporary="true">
-      <makefile filename="$PROJECT_DIR$/Makefile" target="$(GRAMMARS)" workingDirectory="" arguments="">
-        <envs />
-      </makefile>
-      <method v="2" />
-    </configuration>
     <configuration name="all" type="MAKEFILE_TARGET_RUN_CONFIGURATION" factoryName="Makefile" temporary="true">
       <makefile filename="$PROJECT_DIR$/Makefile" target="all" workingDirectory="" arguments="">
         <envs />
       </makefile>
       <method v="2" />
     </configuration>
-    <configuration name="handin-check" type="MAKEFILE_TARGET_RUN_CONFIGURATION" factoryName="Makefile" temporary="true">
-      <makefile filename="$PROJECT_DIR$/conf/handin.mk" target="handin-check" workingDirectory="" arguments="">
+    <configuration name="checkcases" type="MAKEFILE_TARGET_RUN_CONFIGURATION" factoryName="Makefile" temporary="true">
+      <makefile filename="$PROJECT_DIR$/project5_testcases/Makefile" target="checkcases" workingDirectory="" arguments="">
+        <envs />
+      </makefile>
+      <method v="2" />
+    </configuration>
+    <configuration name="clean" type="MAKEFILE_TARGET_RUN_CONFIGURATION" factoryName="Makefile" temporary="true">
+      <makefile filename="$PROJECT_DIR$/project5_testcases/Makefile" target="clean" workingDirectory="" arguments="">
         <envs />
       </makefile>
       <method v="2" />
@@ -92,9 +103,9 @@
     <recent_temporary>
       <list>
         <item itemvalue="应用程序.Main" />
-        <item itemvalue="Makefile 目标.all" />
-        <item itemvalue="Makefile 目标.all" />
-        <item itemvalue="Makefile 目标.all" />
+        <item itemvalue="Makefile 目标.checkcases" />
+        <item itemvalue="Makefile 目标.checkcases" />
+        <item itemvalue="Makefile 目标.clean" />
         <item itemvalue="Makefile 目标.all" />
       </list>
     </recent_temporary>
@@ -109,6 +120,17 @@
       <updated>1761050530665</updated>
     </task>
     <servers />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="final try" />
