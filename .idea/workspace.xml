@@ -6,6 +6,9 @@
   <component name="ChangeListManager">
     <list default="true" id="ba20fe1f-c0d1-47b7-9f89-0d1c8d818107" name="更改" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/Main.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/Main.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$IRGenerator.class" beforeDir="false" afterPath="$PROJECT_DIR$/out/production/CS323-Compilers-2025F-Projects/impl/Compiler$IRGenerator.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/Main.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/Main.java" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -34,22 +37,25 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;RunOnceActivity.OpenProjectViewOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;my-project5&quot;,
-    &quot;last_opened_file_path&quot;: &quot;/Users/wuzhi/Desktop/MyProgram/CS323-Compilers-2025F-Projects/src/main/java&quot;,
-    &quot;project.structure.last.edited&quot;: &quot;SDK&quot;,
-    &quot;project.structure.proportion&quot;: &quot;0.0&quot;,
-    &quot;project.structure.side.proportion&quot;: &quot;0.2&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.pluginManager&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "RunOnceActivity.OpenProjectViewOnStart": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "git-widget-placeholder": "my-project5",
+    "last_opened_file_path": "/Users/wuzhi/Desktop/MyProgram/CS323-Compilers-2025F-Projects/project5_testcases",
+    "project.structure.last.edited": "SDK",
+    "project.structure.proportion": "0.0",
+    "project.structure.side.proportion": "0.2",
+    "settings.editor.selected.configurable": "preferences.pluginManager"
   }
-}</component>
+}]]></component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$/src/main/java" />
       <recent name="$PROJECT_DIR$/testcases/project2" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/project5_testcases" />
     </key>
   </component>
   <component name="RunManager" selected="应用程序.Main">
